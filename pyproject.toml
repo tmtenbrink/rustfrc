@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "rustfrc"
+version = "0.1.0"
+description = "Package with some basic optimized Rust functions for use with FRC resolution determination for microscopy. TU Delft BEP 2021-2022."
+authors = ["Tip ten Brink <T.M.tenBrink@student.tudelft.nl>"]
+
+[tool.poetry.dependencies]
+python = "^3.7"
+numpy = "^1.18"
+
+[tool.poetry.dev-dependencies]
+maturin = "^0.11.3"
+diplib = "3.0.0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend ="maturin"

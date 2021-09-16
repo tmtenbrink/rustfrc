@@ -1,0 +1,18 @@
+[package]
+name = "rustfrc"
+version = "0.1.0"
+edition = "2018"
+
+[lib]
+name = "rustfrc"
+crate-type = ["cdylib"]
+
+[dependencies]
+numpy = "0.14"
+ndarray = { version = "0.15", features = ["rayon"] }
+ndarray-rand = "0.14"
+rand = "0.8"
+
+[dependencies.pyo3]
+version = "0.14"
+features = ["extension-module"]
