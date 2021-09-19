@@ -38,10 +38,23 @@ jobs:
         working-directory: ${{ github.workspace }}
         
       - name: Maturin release
-        run: poetry run maturin build release
+        run: poetry run maturin build --release
         working-directory: ${{ github.workspace }}
         
       - uses: actions/upload-artifact@v2
         with:
           name: wheel
           path: ${{ github.workspace }}/target/wheels
+          
+      - name: Install delocate
+        run: pip install delocate
+        working-directory: ${{ github.workspace }}
+        
+      - name: Install delocate
+        run: find . -name "*.whl" -exec delocate-wheel -w wheelhouse --require-archs=universal2 {} \;
+        working-directory: ${{ github.workspace }}
+        
+      - uses: actions/upload-artifact@v2
+        with:
+          name: wheel-fixed
+          path: ${{ github.workspace }}/wheelhouse
