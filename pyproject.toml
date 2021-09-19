@@ -1,7 +1,8 @@
-[project]
+[tool.poetry]
 name = "rustfrc"
 version = "0.1.2"
 description = "Package with some fast Rust functions for use with FRC resolution determination for microscopy. TU Delft BEP 2021-2022."
+authors = ["Tip ten Brink <T.M.tenBrink@student.tudelft.nl>"]
 readme = "README.md"
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -10,12 +11,10 @@ classifiers = [
     "Programming Language :: Rust",
     "Topic :: Scientific/Engineering :: Image Processing"
 ]
+license = "Apache-2.0"
 
-[tool.poetry]
-name = "rustfrc"
-version = "0.1.2"
-description = "Package with some fast Rust functions for use with FRC resolution determination for microscopy. TU Delft BEP 2021-2022."
-authors = ["Tip ten Brink <T.M.tenBrink@student.tudelft.nl>"]
+[tool.poetry.urls]
+"Source Code" = "https://github.com/tmtenbrink/rustfrc"
 
 [tool.poetry.dependencies]
 python = "^3.7"
@@ -23,8 +22,6 @@ numpy = "^1.18"
 
 [tool.poetry.dev-dependencies]
 maturin = "^0.11.3"
-diplib = "~3.0.0"
-twine = "^3.4.2"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

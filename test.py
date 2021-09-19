@@ -1,11 +1,9 @@
 import rustfrc as r
-import diplib as dip
 import numpy as np
 import time
 
 rng = np.random.default_rng()
-img = dip.ImageRead('Benton')(0)[:388, :388]
-x = np.array(img)
+x = np.ones((388, 388))*20
 x = np.repeat(x[:, :, np.newaxis], 1000, axis=2)
 # half_x = np.rint(x/2).astype(int)
 # print(half_x)
