@@ -29,11 +29,11 @@ jobs:
 
       # Runs a set of commands using the runners shell
       - name: Poetry update
-        run: $HOME/.poetry/bin/poetry update
+        run: $HOME/.local/bin/poetry update
         working-directory: $GITHUB_WORKSPACE
         
       - name: Maturin release
-        run: $HOME/.poetry/bin/poetry run maturin build release
+        run: $HOME/.local/bin/poetry run maturin build release
         working-directory: $GITHUB_WORKSPACE
         
       - uses: actions/upload-artifact@v2
