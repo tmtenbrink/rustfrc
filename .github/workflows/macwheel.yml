@@ -26,16 +26,19 @@ jobs:
       # Runs a single command using the runners shell
       - name: Poetry
         run: curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/install-poetry.py | python -
-
+      
+      - name: Add poetry path
+        run: echo ::add-path::$HOME/.local/bin
+      
       - name: HOME test
-        run: echo ${{ env.HOME }}
+        run: echo $HOME
 
       - name: Poetry update
-        run: ${{ env.HOME }}/.local/bin/poetry update
+        run: $HOME/.local/bin/poetry update
         working-directory: ${{ github.workspace }}
         
       - name: Maturin release
-        run: ${{ env.HOME }}/poetry run maturin build release
+        run: $HOME/poetry run maturin build release
         working-directory: ${{ github.workspace }}
         
       - uses: actions/upload-artifact@v2
