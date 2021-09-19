@@ -36,7 +36,7 @@ python-versions = ">=2.6, !=3.0.*, !=3.1.*, !=3.2.*"
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.7"
-content-hash = "f9c2a571772b5efa6b1b5914da7810b088fb57d310e31ecc12a0eff28b722c09"
+content-hash = "2f0c7a4ef031f9bf4d42a7adbf6b4ea81b28090e3aba8a030fb5bd95768e7b86"
 
 [metadata.files]
 diplib = [
