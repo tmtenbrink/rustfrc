@@ -4,7 +4,7 @@ version = "0.1.1"
 edition = "2018"
 
 [lib]
-name = "_internal"
+name = "rustfrc"
 crate-type = ["cdylib"]
 
 [dependencies]
