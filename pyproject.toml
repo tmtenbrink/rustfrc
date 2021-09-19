@@ -1,6 +1,6 @@
 [project]
 name = "rustfrc"
-version = "0.1.1"
+version = "0.1.2"
 description = "Package with some fast Rust functions for use with FRC resolution determination for microscopy. TU Delft BEP 2021-2022."
 readme = "README.md"
 classifiers = [
@@ -13,7 +13,7 @@ classifiers = [
 
 [tool.poetry]
 name = "rustfrc"
-version = "0.1.1"
+version = "0.1.2"
 description = "Package with some fast Rust functions for use with FRC resolution determination for microscopy. TU Delft BEP 2021-2022."
 authors = ["Tip ten Brink <T.M.tenBrink@student.tudelft.nl>"]
 
