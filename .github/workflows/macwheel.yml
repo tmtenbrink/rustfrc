@@ -28,17 +28,17 @@ jobs:
         run: curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/install-poetry.py | python -
       
       - name: Add poetry path
-        run: echo ::add-path::$HOME/.local/bin
+        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
       
       - name: HOME test
-        run: echo $HOME
+        run: echo "$PATH"
 
       - name: Poetry update
-        run: $HOME/.local/bin/poetry update
+        run: poetry update
         working-directory: ${{ github.workspace }}
         
       - name: Maturin release
-        run: $HOME/poetry run maturin build release
+        run: poetry run maturin build release
         working-directory: ${{ github.workspace }}
         
       - uses: actions/upload-artifact@v2
