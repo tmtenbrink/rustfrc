@@ -16,7 +16,6 @@ fn rustfrc(py: Python<'_>, m: &PyModule) -> PyResult<()> {
     Ok(())
 }
 
-
 /// binom_split(a)
 /// --
 ///
@@ -31,6 +30,8 @@ fn binom_split<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, i32>) -> PyResul
         if error_i.load(Ordering::Relaxed) == 0 {
             let mut rng = thread_rng();
             let n = u64::try_from(i).unwrap_or_else(|_| {
+                // Since this is a parallel function, a special AtomicI32 is necessary to communicate
+                // if there is a failure.
                 error_i.store(i, Ordering::Relaxed);
                 0
             });
