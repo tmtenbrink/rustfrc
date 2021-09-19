@@ -2,3 +2,4 @@
 Cargo.lock
 /.idea
 /rustfrc/__pycache__
+/rustfrc/*.so
