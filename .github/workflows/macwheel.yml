@@ -16,6 +16,7 @@ jobs:
     strategy:
       matrix:
         python-version: [ '3.7', '3.8', '3.9' ]
+        target: ['--universal2', '']
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
@@ -50,20 +51,15 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
        
-      - name: Maturin release
-        run: poetry run maturin build --release --universal2
+      - name: maturin build release 
+        run: poetry run maturin build --release ${{ matrix.target }}
         working-directory: ${{ github.workspace }}
         
-      - uses: actions/upload-artifact@v2
-        with:
-          name: wheel
-          path: ${{ github.workspace }}/target/wheels
-        
-      - name: Install delocate
+      - name: delocate fix wheels
         run: find . -name "*.whl" -exec delocate-wheel -w wheelhouse --require-archs=universal2 {} \;
         working-directory: ${{ github.workspace }}
-        
+      
       - uses: actions/upload-artifact@v2
         with:
-          name: wheel-fixed
+          name: wheelhouse
           path: ${{ github.workspace }}/wheelhouse
