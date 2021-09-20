@@ -36,7 +36,7 @@ If you want to build .whl files that are compatible with a wide range of Linux d
 This example assumes a manylinux2014 (x86_64) target, using other docker base images should work to compile for other targets. Go into the `rustfrc/docker` directory and run:
 ```shell
 docker pull quay.io/pypa/manylinux2014_x86_64
-docker build -t tmtenbrink/manylinux2014-rustfrc --build-arg PY_ABI=cp39-cp39 .
+docker build --no-cache -t tmtenbrink/manylinux2014-rustfrc --build-arg PY_ABI=cp39-cp39 .
 ```
 
 After the image is built, run it as a container:
