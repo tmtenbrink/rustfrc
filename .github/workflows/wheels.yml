@@ -50,10 +50,7 @@ jobs:
         fail-fast: false
         matrix:
           target: ['--universal2', '']
-          include:
-            - py-version: 3.7
-            - py-version: 3.8
-            - py-version: 3.9
+          py-version: ['3.7', '3.8', '3.9']
       # Steps represent a sequence of tasks that will be executed as part of the job
       steps:
         # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
@@ -64,6 +61,7 @@ jobs:
 
         - name: Rustup install aarch64 target
           run: rustup target add aarch64-apple-darwin
+          if: ${{ matrix.target == '--universal2' }}
 
         # Runs a single command using the runners shell
         - name: Poetry
@@ -84,7 +82,7 @@ jobs:
           working-directory: ${{ github.workspace }}
 
         - name: maturin build release 
-          run: poetry run maturin build --release ${{ matrix.target }} -i python${{ env.py-version }}
+          run: poetry run maturin build --release ${{ matrix.target }} -i python
           working-directory: ${{ github.workspace }}
 
         - name: delocate fix wheels
@@ -103,10 +101,7 @@ jobs:
         strategy:
           fail-fast: false
           matrix:
-            include:
-              - py-version: 3.7
-              - py-version: 3.8
-              - py-version: 3.9
+            py-version: ['3.7', '3.8', '3.9']
         steps:
           # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
           - uses: actions/checkout@v2
@@ -127,7 +122,7 @@ jobs:
             working-directory: ${{ github.workspace }}
 
           - name: maturin build release 
-            run: poetry run maturin build --release -i python${{ matrix.py-version }}
+            run: poetry run maturin build --release -i python
             working-directory: ${{ github.workspace }}
 
           - uses: actions/upload-artifact@v2
