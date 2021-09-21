@@ -16,7 +16,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Image Processing"
 ]
 dependencies = [
-  "numpy>=1.18"
+  'numpy >= 1.18, < 2'
 ]
 [project.urls]
 repository = "https://github.com/tmtenbrink/rustfrc"
