@@ -5,16 +5,19 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-env:
-  PYTHON_INSTALL: '3.9'
-  PYTHON_INSTALL_PEP_425: 'cp39-cp39'
-  PYTHON_TARGETS: "python3.9 python3.8 python3.7"
-
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
     buildmanylinux:
       strategy:
         fail-fast: false
+        matrix:
+          include:
+            - py-version: 3.7
+              py-pep-425: 'cp37-cp37m'
+            - py-version: 3.8
+              py-pep-425: 'cp38-cp38'
+            - py-version: 3.9
+              py-pep-425: 'cp39-cp39'
       runs-on: ubuntu-latest
       steps:
       - name: Checkout action
@@ -28,12 +31,12 @@ jobs:
       - name: Setup Python environment
         uses: actions/setup-python@v2
         with:
-          python-version: ${{ env.PYTHON_INSTALL }}
+          python-version: ${{ matrix.py-version }}
       - name: Build manylinux Python wheels
         uses: './'
         with:
-          python-install: ${{ env.PYTHON_INSTALL }}
-          python-targets: ${{ env.PYTHON_TARGETS }}
+          py-version: "python${{ matrix.py-version }}"
+          py-pep-425: ${{ matrix.py-pep-425 }}
           package-path: ${{ github.repository }}
       - uses: actions/upload-artifact@v2
         with:
@@ -44,15 +47,20 @@ jobs:
       # The type of runner that the job will run on
       runs-on: macos-11
       strategy:
+        fail-fast: false
         matrix:
           target: ['--universal2', '']
+          include:
+            - py-version: 3.7
+            - py-version: 3.8
+            - py-version: 3.9
       # Steps represent a sequence of tasks that will be executed as part of the job
       steps:
         # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
         - uses: actions/checkout@v2
         - uses: actions/setup-python@v2
           with:
-            python-version: ${{ env.PYTHON_INSTALL }}
+            python-version: ${{ matrix.py-version }}
 
         - name: Rustup install aarch64 target
           run: rustup target add aarch64-apple-darwin
@@ -76,7 +84,7 @@ jobs:
           working-directory: ${{ github.workspace }}
 
         - name: maturin build release 
-          run: poetry run maturin build --release ${{ matrix.target }} -i ${{ env.PYTHON_TARGETS }}
+          run: poetry run maturin build --release ${{ matrix.target }} -i python${{ env.py-version }}
           working-directory: ${{ github.workspace }}
 
         - name: delocate fix wheels
@@ -92,12 +100,19 @@ jobs:
         # The type of runner that the job will run on
         runs-on: windows-latest
         # Steps represent a sequence of tasks that will be executed as part of the job
+        strategy:
+          fail-fast: false
+          matrix:
+            include:
+              - py-version: 3.7
+              - py-version: 3.8
+              - py-version: 3.9
         steps:
           # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
           - uses: actions/checkout@v2
           - uses: actions/setup-python@v2
             with:
-              python-version: ${{ env.PYTHON_INSTALL }}
+              python-version: ${{ matrix.py-version }}
 
           # Runs a single command using the runners shell
           - name: Poetry
@@ -108,13 +123,11 @@ jobs:
           
           - name: Poetry update
             run: |
-              echo The value of ^%AppData^% is %AppData%
-              echo $Env:Path
               poetry update
             working-directory: ${{ github.workspace }}
 
           - name: maturin build release 
-            run: poetry run maturin build --release -i ${{ env.PYTHON_TARGETS }}
+            run: poetry run maturin build --release -i python${{ matrix.py-version }}
             working-directory: ${{ github.workspace }}
 
           - uses: actions/upload-artifact@v2
