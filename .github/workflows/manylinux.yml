@@ -3,7 +3,7 @@ name: build-wheels
 on:
   # Do this when a new release is published
   release:
-    types: [published]
+    types: [workflow_dispatch]
 
 jobs:
       build-manylinux:
