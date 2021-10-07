@@ -1,33 +1,41 @@
-build-manylinux:
-      strategy:
-        # Let individual matrix jobs go if one fails
-        fail-fast: true
-        matrix:
-          include:
-            # We are compatible with all supported Python versions. The 'cp37-cp37m' is the PEP 425 tag of that specific
-            # Python version, which is where the Python interpreters of the manylinux Docker container are located.
-            - py-version: '3.9'
-              py-pep-425: 'cp39-cp39'
-            - py-version: '3.10'
-              py-pep-425: 'cp310-cp310'
-      runs-on: ubuntu-latest
-      steps:
-      - name: Checkout rustfrc
-        uses: actions/checkout@v2
-        with:
-          path: ${{ github.repository }}
-      # Set up the repository with the Docker container action, which will allow us to build and run a manylinux Docker
-      # container that will ensure compatibility. See the action repository for more info.
-      - name: maturin-manylinux-wheels-action
-        uses: tmtenbrink/maturin-manylinux-wheels-action@v1
-        with:
-          py-version: "python${{ matrix.py-version }}"
-          py-pep-425: ${{ matrix.py-pep-425 }}
-          package-path: ${{ github.repository }}
-      # Set up the package repository in a sub-path, so it doesn't overwrite the Docker container action repo
-        
-      # It now uploads all the wheel files to an artifact that we can later retrieve
-      - uses: actions/upload-artifact@v2
-        with:
-          name: wheels
-          path: ${{ github.repository }}/dist
+name: build-wheels
+
+on:
+  # Do this when a new release is published
+  release:
+    types: [published]
+
+jobs:
+      build-manylinux:
+            strategy:
+              # Let individual matrix jobs go if one fails
+              fail-fast: true
+              matrix:
+                include:
+                  # We are compatible with all supported Python versions. The 'cp37-cp37m' is the PEP 425 tag of that specific
+                  # Python version, which is where the Python interpreters of the manylinux Docker container are located.
+                  - py-version: '3.9'
+                    py-pep-425: 'cp39-cp39'
+                  - py-version: '3.10'
+                    py-pep-425: 'cp310-cp310'
+            runs-on: ubuntu-latest
+            steps:
+            - name: Checkout rustfrc
+              uses: actions/checkout@v2
+              with:
+                path: ${{ github.repository }}
+            # Set up the repository with the Docker container action, which will allow us to build and run a manylinux Docker
+            # container that will ensure compatibility. See the action repository for more info.
+            - name: maturin-manylinux-wheels-action
+              uses: tmtenbrink/maturin-manylinux-wheels-action@v1
+              with:
+                py-version: "python${{ matrix.py-version }}"
+                py-pep-425: ${{ matrix.py-pep-425 }}
+                package-path: ${{ github.repository }}
+            # Set up the package repository in a sub-path, so it doesn't overwrite the Docker container action repo
+
+            # It now uploads all the wheel files to an artifact that we can later retrieve
+            - uses: actions/upload-artifact@v2
+              with:
+                name: wheels
+                path: ${{ github.repository }}/dist
