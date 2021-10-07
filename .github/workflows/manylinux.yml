@@ -14,7 +14,7 @@ jobs:
                   # We are compatible with all supported Python versions. The 'cp37-cp37m' is the PEP 425 tag of that specific
                   # Python version, which is where the Python interpreters of the manylinux Docker container are located.
                   - py-version: '3.7'
-                    py-pep-425: 'cp37m-cp37m'
+                    py-pep-425: 'cp37-cp37m'
                   - py-version: '3.8'
                     py-pep-425: 'cp38-cp38'
             runs-on: ubuntu-latest
