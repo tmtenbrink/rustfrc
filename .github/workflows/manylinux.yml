@@ -1,9 +1,8 @@
-name: build-wheels
+name: build-manylinux
 
 on:
   # Do this when a new release is published
-  release:
-    types: [workflow_dispatch]
+ workflow_dispatch:
 
 jobs:
       build-manylinux:
