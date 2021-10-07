@@ -30,7 +30,7 @@ jobs:
       - name: Checkout action
         uses: actions/checkout@v2
         with:
-          repository: tmtenbrink/python-wheels-manylinux-build
+          repository: tmtenbrink/maturin-manylinux-wheels-action@1.0.0
       # Set up the package repository in a sub-path, so it doesn't overwrite the Docker container action repo
       - name: Checkout rustfrc
         uses: actions/checkout@v2
