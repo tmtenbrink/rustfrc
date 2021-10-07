@@ -21,6 +21,8 @@ jobs:
               py-pep-425: 'cp38-cp38'
             - py-version: 3.9
               py-pep-425: 'cp39-cp39'
+            - py-version: 3.10
+              py-pep-425: 'cp310-cp310'
       runs-on: ubuntu-latest
       steps:
       # Set up the repository with the Docker container action, which will allow us to build and run a manylinux Docker
@@ -64,7 +66,7 @@ jobs:
           # macOS and pip versions. Universal2 wheels are compatible with Apple Silicon (aarch64) Macs but also updated
           # x86_64 Macs. In the future only universal2 wheels will be necessary.
           target: ['--universal2', '']
-          py-version: ['3.7', '3.8', '3.9']
+          py-version: ['3.7', '3.8', '3.9', '3.10']
       steps:
         - uses: actions/checkout@v2
         - uses: actions/setup-python@v2
@@ -118,7 +120,7 @@ jobs:
         strategy:
           fail-fast: false
           matrix:
-            py-version: ['3.7', '3.8', '3.9']
+            py-version: ['3.7', '3.8', '3.9', '3.10']
         steps:
           - uses: actions/checkout@v2
           - uses: actions/setup-python@v2
