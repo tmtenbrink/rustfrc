@@ -1,6 +1,6 @@
 /target
 Cargo.lock
 /.idea
-/python/rustfrc/__pycache__
-/rustfrc/*.so
 /tests/.pytest_cache
+**/__pycache__/**
+*.so
