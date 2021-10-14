@@ -7,4 +7,4 @@ def binom_split(a: np.ndarray) -> np.ndarray:
     binomial distribution (n, p) with n = pixel value and p = 0.5. Returns a single image.
     This conserves shot noise.
     """
-    return _internal.binom_split(a.astype(np.int32))
+    return _internal.binom_split_py(a.astype(np.int32))

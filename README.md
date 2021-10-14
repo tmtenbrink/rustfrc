@@ -5,16 +5,16 @@
 
 rustfrc is a Python package with some fast Rust functions for use with FRC resolution determination for microscopy. It is in development for use during a Bachelor end project for the TU Delft in 2021-2022.
 
-Since rustfrc contains compiled extensions and is not pure Python, it is not available for all platforms, but only for those with available compiled wheels. As of version 1.0.1, they are available for Windows (x86_64), macOS (x86_64 and universal2, which includes Apple Silicon) and Linux (x86_64). However, since Rust and Python are supported on many platforms, it is not difficult to compile for other platforms (see below).
+Since rustfrc contains compiled extensions and is not pure Python, it is not available for all platforms, but only for those with available compiled wheels. They are available for Windows (x86_64), macOS (x86_64 and universal2, which includes Apple Silicon) and Linux (x86_64). However, since Rust and Python are supported on many platforms, it is not difficult to compile for other platforms (see below).
 
 ## Features
 
-Currently, rustfrc does not have many features. The primary one is `binom_split(x: np.ndarray) -> np.ndarray` which samples _Binom ~ (n, 0.5)_ with n as the array element value.
+Currently, rustfrc does not have many features. The primary one is `binom_split(x: np.ndarray) -> np.ndarray` which samples _Binom ~ (n, 0.5)_ with n as the array element value. The operation is fully parallelized and somewhere between 3-10x faster than sampling using NumPy.
 
 ## Requirements
 
 * Python 3.7 or greater
-* numpy 1.18 or greater
+* NumPy 1.18 or greater
 
 ## Installation
 
@@ -37,7 +37,7 @@ Build a wheel file like this (if using poetry, append `poetry run` before the co
 maturin build --release
 ```
 
-If you want to choose which versions of Python to build for, you can append e.g. `maturin build --release -i python3.9 python3.8 python3.7`. Here `python3.7` should be an available Python command installed on your computer.
+If you want to choose which versions of Python to build for, you can write e.g. `maturin build --release -i python3.9 python3.8 python3.7`. Here, for example '`python3.7`' should be an available Python command installed on your computer.
 
 This generates `.whl` files in `\target\wheels`. Then, create a Python environment of your choosing (with `numpy ^1.18` and `python ^3.7`), drop the `.whl` file in it and run `pip install <.whl filename>`, for example: `pip install rustfrc-0.1.0-cp39-none-win_amd64.whl`. Then, use `import rustfrc` in your Python script to be able to use the Rust functions. This should be generally valid for all platforms. The only real requirement is the availability of a Rust toolchain and Python for your platform.
 
