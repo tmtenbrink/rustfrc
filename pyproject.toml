@@ -1,7 +1,7 @@
 [project]
 name = "rustfrc"
 version = "1.0.3"
-description = "Fast utility functions useful for Fourier Ring/Shell Correlation: binomial splitting of arrrays"
+description = "Fast utility functions useful for Fourier Ring/Shell Correlation: binomial splitting of arrays."
 readme = "README.md"
 requires-python = ">= 3.7"
 license = {text = "Apache-2.0"}
@@ -22,7 +22,7 @@ dependencies = [
 [tool.poetry]
 name = "rustfrc"
 version = "1.0.3"
-description = "Fast utility functions useful for Fourier Ring/Shell Correlation: binomial splitting of arrays"
+description = "Fast utility functions useful for Fourier Ring/Shell Correlation: binomial splitting of arrays."
 authors = ["Tip ten Brink <T.M.tenBrink@student.tudelft.nl>"]
 
 [tool.poetry.dependencies]

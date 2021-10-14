@@ -15,3 +15,6 @@ ndarray-rand = "~0.14"
 [dependencies.pyo3]
 version = "~0.14"
 features = ["extension-module"]
+
+[package.metadata.maturin]
+python-source = "python"
