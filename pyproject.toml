@@ -1,6 +1,6 @@
 [project]
 name = "rustfrc"
-version = "1.1.0"
+version = "1.1.1"
 description = "Fast utility functions useful for Fourier Ring/Shell Correlation: binom_split, pois_gen, square_abs."
 readme = "README.md"
 requires-python = ">= 3.7"
@@ -19,9 +19,12 @@ dependencies = [
   "numpy >= 1.18, < 2"
 ]
 
+[project.urls]
+Source = "https://github.com/tmtenbrink/rustfrc"
+
 [tool.poetry]
 name = "rustfrc"
-version = "1.1.0"
+version = "1.1.1"
 description = "Fast utility functions useful for Fourier Ring/Shell Correlation: binomial splitting of arrays."
 authors = ["Tip ten Brink <T.M.tenBrink@student.tudelft.nl>"]
 
