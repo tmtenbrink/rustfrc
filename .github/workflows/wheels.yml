@@ -61,6 +61,9 @@ jobs:
         with:
           python-version: ${{ matrix.py-version }}
 
+      - name: Rust latest
+        run: rustup update
+      
       # The x86_64 Rust toolchain is installed on GitHub runners, but since we compile also for Apple Silicon, we also
       # need the correct Rust toolchain.
       - name: Rustup install aarch64 target
@@ -115,6 +118,9 @@ jobs:
           with:
             python-version: ${{ matrix.py-version }}
 
+        - name: Rust latest
+          run: rustup update
+        
         # Installing poetry requires a different command on Windows than on macOS/Linux
         - name: Poetry
           run: (Invoke-WebRequest -Uri https://raw.githubusercontent.com/python-poetry/poetry/master/install-poetry.py -UseBasicParsing).Content | python -
