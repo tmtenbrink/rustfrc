@@ -3,7 +3,7 @@ name = "rustfrc"
 version = "1.1.1"
 description = "Fast utility functions useful for Fourier Ring/Shell Correlation: binom_split, pois_gen, square_abs."
 readme = "README.md"
-requires-python = ">= 3.7"
+requires-python = ">=3.7.0"
 license = {text = "Apache-2.0"}
 authors = [
   {email = "T.M.tenBrink@student.tudelft.nl"},
