@@ -1,4 +1,4 @@
-from python import rustfrc as r
+import python.rustfrc as r
 import numpy as np
 import time
 

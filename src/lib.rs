@@ -1,36 +1,76 @@
-use ndarray_rand::rand_distr::Binomial;
-use ndarray_rand::rand::prelude::{Distribution, thread_rng};
-use ndarray::{Array, Dimension};
-use numpy::{IntoPyArray, PyReadonlyArrayDyn, PyArrayDyn};
-use pyo3::prelude::{pymodule, pyfunction, wrap_pyfunction, PyModule, PyResult, Python};
-use pyo3::exceptions::PyValueError;
 use std::convert::TryFrom;
-use std::sync::atomic::{Ordering, AtomicBool};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::marker::{Send, Sync};
+use std::sync::atomic::{AtomicBool, Ordering};
 
+use ndarray::{Array, ArrayD, Dimension};
+use ndarray_rand::rand::prelude::{Distribution, thread_rng};
+use ndarray_rand::rand_distr::{Binomial, Poisson, PoissonError};
+use num_complex::{Complex, Complex32, Complex64};
+use num_traits::Float;
+use numpy::{IntoPyArray, PyArrayDyn, PyReadonlyArrayDyn};
+use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
+use pyo3::PyObject;
 
 #[pymodule]
 fn rustfrc(py: Python<'_>, m: &PyModule) -> PyResult<()> {
     let internal = PyModule::new(py, "_internal")?;
     internal.add_function(wrap_pyfunction!(binom_split_py, internal)?)?;
+    internal.add_function(wrap_pyfunction!(sqr_abs32_py, internal)?)?;
+    internal.add_function(wrap_pyfunction!(sqr_abs64_py, internal)?)?;
+    internal.add_function(wrap_pyfunction!(pois_gen_py, internal)?)?;
+
     m.add_submodule(internal)?;
 
     Ok(())
 }
 
-/// binom_split(a)
-/// --
-///
-/// Takes an image (np.ndarray with dtype i32) and splits every pixel value according to the
-/// binomial distribution (n, p) with n = pixel value and p = 0.5. Returns a single image.
+/// Takes an array (np.ndarray with dtype i32) and splits every pixel value according to the
+/// binomial distribution (n, p) with n = pixel value and p = 0.5. Returns a single array.
 #[pyfunction]
+#[pyo3(text_signature = "a, /")]
 fn binom_split_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, i32>) -> PyResult<&'py PyArrayDyn<i32>> {
     let a = a.to_owned_array();
 
     binom_split(a)
              .map_err(|e| PyValueError::new_err(format!("{}", e.to_string())))
              .map(|a| a.into_pyarray(py))
+}
+
+/// Takes an array (np.ndarray with dtype complex64) and takes the absolute value and then squares
+/// it, element-wise.
+#[pyfunction]
+#[pyo3(text_signature = "a, /")]
+fn sqr_abs32_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, Complex32>) -> &'py PyArrayDyn<f32> {
+    let a = a.to_owned_array();
+
+    sqr_abs(a).into_pyarray(py)
+}
+
+/// Takes an array (np.ndarray with dtype complex128) and takes the absolute value and then squares
+/// it, element-wise.
+#[pyfunction]
+#[pyo3(text_signature = "a, /")]
+fn sqr_abs64_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, Complex64>) -> &'py PyArrayDyn<f64> {
+    let a = a.to_owned_array();
+
+    sqr_abs(a).into_pyarray(py)
+}
+
+/// Generates an array (np.ndarray with dtype float64) by sampling a Poisson distribution with
+/// parameter lambda for each element. Takes a lambda parameter (positive) and a shape tuple of
+/// non-negative ints.
+#[pyfunction]
+#[pyo3(text_signature = "a, /")]
+fn pois_gen_py(py: Python, shape: PyObject, lambda: f64 ) -> PyResult<&PyArrayDyn<f64>> {
+    let shape_vec: Vec<usize> = shape.extract(py)?;
+    let shape = shape_vec.as_slice();
+
+    pois_gen(shape, lambda)
+        .map_err(|e| PyValueError::new_err(format!("{}", e.to_string())))
+        .map(|a| a.into_pyarray(py))
 }
 
 #[derive(Debug)]
@@ -45,6 +85,8 @@ impl Display for ToUsizeError {
 
 impl Error for ToUsizeError {}
 
+/// Takes an ndarray (i32, dimension D) and splits every pixel value according to the
+/// binomial distribution (n, p) with n = element value and p = 0.5. Returns a single array.
 fn binom_split<D: Dimension>(mut a: Array<i32, D>) -> Result<Array<i32, D>, ToUsizeError> {
     // AtomicBool is thread-safe, and allows for communicating an error state occurred across threads
     // We initialize it with the value false, since no error occurred
@@ -78,6 +120,36 @@ fn binom_split<D: Dimension>(mut a: Array<i32, D>) -> Result<Array<i32, D>, ToUs
     } else {
         Ok(a)
     }
+}
+
+/// Takes an ndarray (dimension D and complex number of generic float F) and computes the absolute
+/// value and then square for each element.
+fn sqr_abs<D: Dimension, F: Float + Send + Sync>(mut a: Array<Complex<F>, D>) -> Array<F, D> {
+    // We map all values in parallel, since they do not depend on each other
+    // As there is no standard parallel map, we first map in place
+    a.par_mapv_inplace(|i| { let c: Complex<F> = Complex::from({
+        i.norm_sqr()
+    }); c });
+    // Then we get the real part
+    a.mapv(|i| {
+        i.re
+    })
+}
+
+/// Generates an ndarray (dynamic dimension) by sampling a Poisson distribution with parameter
+/// lambda for each element. Takes a lambda parameter (positive f64) and a shape slice.
+fn pois_gen(shape: &[usize], lambda: f64) -> Result<ArrayD<f64>, PoissonError> {
+    if !(lambda > 0.0) {
+        return Err(PoissonError::ShapeTooSmall);
+    }
+
+    let mut a = ArrayD::<f64>::from_elem(shape, lambda);
+    a.par_mapv_inplace(|l| {
+        let mut rng = thread_rng();
+
+        Poisson::new(l).unwrap().sample(&mut rng)
+    });
+    Ok(a)
 }
 
 #[cfg(test)]
@@ -123,5 +195,28 @@ mod tests {
 
         let b = binom_split(a6);
         assert!(b.is_ok());
+    }
+
+    #[test]
+    fn sqr_abs_test() {
+        let a: ndarray::Array2<Complex32> = ndarray::arr2(&[[Complex32::new(3., 4.),
+            Complex32::new(3.32, 1.532)],
+            [Complex32::new(-2., 5.), Complex32::new(582., -423.)]]);
+
+        let b = sqr_abs(a);
+        let a: ndarray::Array2<f32> = ndarray::arr2(&[[25., 13.369424], [29., 517653.]]);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn pois_gen_test() {
+        let shape: &[usize] = &[2, 3, 1];
+        let lam = 20.0;
+
+        let a = pois_gen(shape, lam).unwrap();
+
+        let int_a = a.mapv(|f| f as i64);
+
+        assert!(*(int_a.iter().min().unwrap()) >= 0);
     }
 }
