@@ -190,7 +190,8 @@ jobs:
           with:
             name: wheels
             path: ${{ github.workspace }}/target/wheels
-   wheel-publish:
+            
+  wheel-publish:
       needs: [build-manylinux, build-mac, build-windows]
       runs-on: ubuntu-latest
       steps:
