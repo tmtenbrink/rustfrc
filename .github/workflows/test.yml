@@ -1,8 +1,7 @@
 name: test
 
 on:
-  push:
-    branches: [ action-history ]
+  workflow_dispatch:
 
 jobs:
   test-linux:
