@@ -31,7 +31,7 @@ def sqr_abs(a: _np.ndarray) -> _np.ndarray:
         raise ValueError("Only np.csingle and np.cdouble dtypes are supported, please cast using np.astype!")
 
 
-def pois_gen(lam: float, shape: tuple[int, ...]) -> _np.ndarray:
+def pois_gen(lam: float, shape: tuple) -> _np.ndarray:
     """
     Generates an array (np.ndarray with dtype float64) by sampling a Poisson distribution with parameter lambda for each
     element. Takes a lambda parameter (positive) and a shape tuple of non-negative ints. Maximum number of elements in
