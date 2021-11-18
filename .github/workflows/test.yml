@@ -1,0 +1,50 @@
+name: test
+
+on:
+  push:
+    branches: [ action-history ]
+
+jobs:
+  test-linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        py-version: ['3.7', '3.8', '3.9', '3.10']
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout rustfrc
+      uses: actions/checkout@v2
+    # Set up the repository with the Docker container action, which will allow us to build and run a manylinux Docker
+    # container that will ensure compatibility. See the action repository for more info.
+    - uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.py-version }}
+        
+    - name: Rust latest
+      run: rustup update
+
+    # We install poetry as a dependency manager to read the pyproject.toml of our package.
+    - name: Poetry
+      run: curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/install-poetry.py | python -
+
+    # GitHub has modified PATH behavior, so we use the below command to add poetry to our PATH
+    - name: Add poetry path
+      run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    # poetry update will install all dependencies for our package, as well as maturin, which we use as our build
+    # back-end
+    - name: Poetry update
+      run: poetry update
+      working-directory: ${{ github.workspace }}
+      
+    - name: maturin develop
+      run: poetry run maturin develop
+      working-directory: ${{ github.workspace }}
+      
+    - name: cargo test
+      run: cargo test
+      working-directory: ${{ github.workspace }}
+    
+    - name: poetry pytest
+      run: poetry run pytest
+      working-directory: ${{ github.workspace }}
