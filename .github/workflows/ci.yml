@@ -2,15 +2,61 @@ name: build-wheels
 
 on:
   # Do this when a new release is published
+  push:
+    branches: [ action-history ]
+  pull_request:
   release:
-    types: [published]
+    types: [ published ]
 
 jobs:
   # Build for manylinux, which allows it to be run on many different Linux platforms
+  test-linux:
+    strategy:
+      matrix:
+        py-version: ['3.7', '3.8', '3.9', '3.10']
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout rustfrc
+      uses: actions/checkout@v2
+    # Set up the repository with the Docker container action, which will allow us to build and run a manylinux Docker
+    # container that will ensure compatibility. See the action repository for more info.
+    - uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.py-version }}
+        
+    - name: Rust latest
+      run: rustup update
+
+    # We install poetry as a dependency manager to read the pyproject.toml of our package.
+    - name: Poetry
+      run: curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/install-poetry.py | python -
+
+    # GitHub has modified PATH behavior, so we use the below command to add poetry to our PATH
+    - name: Add poetry path
+      run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    # poetry update will install all dependencies for our package, as well as maturin, which we use as our build
+    # back-end
+    - name: Poetry update
+      run: poetry update
+      working-directory: ${{ github.workspace }}
+      
+    - name: maturin develop
+      run: poetry run maturin develop
+      working-directory: ${{ github.workspace }}
+      
+    - name: cargo test
+      run: cargo test
+      working-directory: ${{ github.workspace }}
+    
+    - name: poetry pytest
+      run: poetry run pytest
+      working-directory: ${{ github.workspace }}
   build-manylinux:
+    if: ${{ github.event_name == 'release' && github.event.action == 'published' }}
+    needs: [test-linux]
     strategy:
       # Let individual matrix jobs go if one fails
-      fail-fast: false
       matrix:
         include:
           # We are compatible with all supported Python versions. The 'cp37-cp37m' is the PEP 425 tag of that specific
@@ -45,10 +91,11 @@ jobs:
         name: wheels
         path: ${{ github.repository }}/dist
 
-  buildmac:
+  build-mac:
+    if: ${{ github.event_name == 'release' && github.event.action == 'published' }}
+    needs: [test-linux]
     runs-on: macos-11
     strategy:
-      fail-fast: false
       matrix:
         # If we run it without this argument, it will generate only x86_64 wheels, which are compatible with more
         # macOS and pip versions. Universal2 wheels are compatible with Apple Silicon (aarch64) Macs but also updated
@@ -106,10 +153,11 @@ jobs:
           name: wheels
           path: ${{ github.workspace }}/wheelhouse
 
-  buildwindows:
+  build-windows:
+      if: ${{ github.event_name == 'release' && github.event.action == 'published' }}
+      needs: [test-linux]
       runs-on: windows-latest
       strategy:
-        fail-fast: false
         matrix:
           py-version: ['3.7', '3.8', '3.9', '3.10']
       steps:
@@ -142,3 +190,26 @@ jobs:
           with:
             name: wheels
             path: ${{ github.workspace }}/target/wheels
+            
+  wheel-publish:
+      needs: [build-manylinux, build-mac, build-windows]
+      runs-on: ubuntu-latest
+      steps:
+        - name: Download artifact
+          uses: actions/download-artifact@v2
+          with:
+            name: wheels
+            path: ${{ github.workspace }}/dist/
+        - name: Set up Python
+          uses: actions/setup-python@v2
+          with:
+            python-version: '3.9'
+        - name: Install wheel test
+          run: |
+            pip install ${{ github.workspace }}/dist/*39*manylinux*.whl
+        - name: Publish a Python distribution to PyPI
+          if: ${{ github.event_name == 'release' && github.event.action == 'published' }}
+          uses: pypa/gh-action-pypi-publish@release/v1
+          with:
+            user: __token__
+            password: ${{ secrets.PYPI_RUSTFRC_TOKEN }}
