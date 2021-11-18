@@ -1,17 +1,22 @@
 [package]
 name = "rustfrc"
-version = "1.0.1"
-edition = "2018"
+version = "1.1.1"
+edition = "2021"
 
 [lib]
 name = "rustfrc"
 crate-type = ["cdylib"]
 
 [dependencies]
-numpy = "^0.14"
-ndarray = { version = "^0.15", features = ["rayon"] }
-ndarray-rand = "^0.14"
+numpy = "~0.14"
+ndarray = { version = "~0.15", features = ["rayon"] }
+ndarray-rand = "~0.14"
+num-complex = "~0.4.0"
+num-traits = "~0.2.14"
 
 [dependencies.pyo3]
-version = "^0.14"
+version = "~0.14"
 features = ["extension-module"]
+
+[package.metadata.maturin]
+python-source = "python"
