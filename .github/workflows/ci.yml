@@ -3,7 +3,7 @@ name: build-wheels
 on:
   # Do this when a new release is published
   push:
-    branches: [ action-history ]
+    branches: [ main ]
   pull_request:
   release:
     types: [ published ]
