@@ -1,0 +1,214 @@
+name: build-wheels
+
+on:
+  # Do this when a new release is published
+  push:
+    branches: [ action-history ]
+  pull_request:
+  release:
+    types: [ published ]
+
+jobs:
+  # Build for manylinux, which allows it to be run on many different Linux platforms
+  test-linux:
+    strategy:
+      matrix:
+        py-version: ['3.7', '3.8', '3.9', '3.10']
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout rustfrc
+      uses: actions/checkout@v2
+    # Set up the repository with the Docker container action, which will allow us to build and run a manylinux Docker
+    # container that will ensure compatibility. See the action repository for more info.
+    - uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.py-version }}
+        
+    - name: Rust latest
+      run: rustup update
+
+    # We install poetry as a dependency manager to read the pyproject.toml of our package.
+    - name: Poetry
+      run: curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/install-poetry.py | python -
+
+    # GitHub has modified PATH behavior, so we use the below command to add poetry to our PATH
+    - name: Add poetry path
+      run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    # poetry update will install all dependencies for our package, as well as maturin, which we use as our build
+    # back-end
+    - name: Poetry update
+      run: poetry update
+      working-directory: ${{ github.workspace }}
+      
+    - name: maturin develop
+      run: poetry run maturin develop
+      working-directory: ${{ github.workspace }}
+      
+    - name: cargo test
+      run: cargo test
+      working-directory: ${{ github.workspace }}
+    
+    - name: poetry pytest
+      run: poetry run pytest
+      working-directory: ${{ github.workspace }}
+  build-manylinux:
+    if: ${{ github.event_name == 'release' && github.event.action == 'published' }}
+    needs: [test-linux]
+    strategy:
+      # Let individual matrix jobs go if one fails
+      matrix:
+        include:
+          # We are compatible with all supported Python versions. The 'cp37-cp37m' is the PEP 425 tag of that specific
+          # Python version, which is where the Python interpreters of the manylinux Docker container are located.
+          - py-version: '3.7'
+            py-pep-425: 'cp37-cp37m'
+          - py-version: '3.8'
+            py-pep-425: 'cp38-cp38'
+          - py-version: '3.9'
+            py-pep-425: 'cp39-cp39'
+          - py-version: '3.10'
+            py-pep-425: 'cp310-cp310'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout rustfrc
+      uses: actions/checkout@v2
+      with:
+        path: ${{ github.repository }}
+    # Set up the repository with the Docker container action, which will allow us to build and run a manylinux Docker
+    # container that will ensure compatibility. See the action repository for more info.
+    - name: maturin-manylinux-wheels-action
+      uses: tmtenbrink/maturin-manylinux-wheels-action@v1.0.1
+      with:
+        py-version: "python${{ matrix.py-version }}"
+        py-pep-425: ${{ matrix.py-pep-425 }}
+        package-path: ${{ github.repository }}
+    # Set up the package repository in a sub-path, so it doesn't overwrite the Docker container action repo
+
+    # It now uploads all the wheel files to an artifact that we can later retrieve
+    - uses: actions/upload-artifact@v2
+      with:
+        name: wheels
+        path: ${{ github.repository }}/dist
+
+  build-mac:
+    if: ${{ github.event_name == 'release' && github.event.action == 'published' }}
+    needs: [test-linux]
+    runs-on: macos-11
+    strategy:
+      matrix:
+        # If we run it without this argument, it will generate only x86_64 wheels, which are compatible with more
+        # macOS and pip versions. Universal2 wheels are compatible with Apple Silicon (aarch64) Macs but also updated
+        # x86_64 Macs. In the future only universal2 wheels will be necessary.
+        target: ['--universal2', '']
+        py-version: ['3.7', '3.8', '3.9', '3.10']
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.py-version }}
+
+      - name: Rust latest
+        run: rustup update
+      
+      # The x86_64 Rust toolchain is installed on GitHub runners, but since we compile also for Apple Silicon, we also
+      # need the correct Rust toolchain.
+      - name: Rustup install aarch64 target
+        run: rustup target add aarch64-apple-darwin
+        if: ${{ matrix.target == '--universal2' }}
+
+      # We install poetry as a dependency manager to read the pyproject.toml of our package.
+      - name: Poetry
+        run: curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/install-poetry.py | python -
+
+      # GitHub has modified PATH behavior, so we use the below command to add poetry to our PATH
+      - name: Add poetry path
+        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      # poetry update will install all dependencies for our package, as well as maturin, which we use as our build
+      # back-end
+      - name: Poetry update
+        run: poetry update
+        working-directory: ${{ github.workspace }}
+
+      # delocate is the macOS version of auditwheel.
+      - name: Install delocate
+        run: pip install delocate
+        working-directory: ${{ github.workspace }}
+
+      # This command will actually compile the wheels. We use --release to make sure Rust properly optimizes the code.
+      # The ${{ matrix.target }} indicates whether we are building universal 2 wheels. Finally using -i python ensures
+      # only the Python we set up above will be used as target.
+      - name: maturin build release
+        run: poetry run maturin build --release ${{ matrix.target }} -i python
+        working-directory: ${{ github.workspace }}
+
+      # We now fix the wheels using delocate
+      - name: delocate fix wheels
+        run: find . -name "*.whl" -exec delocate-wheel -w wheelhouse --require-archs=universal2 {} \;
+        working-directory: ${{ github.workspace }}
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: wheels
+          path: ${{ github.workspace }}/wheelhouse
+
+  build-windows:
+      if: ${{ github.event_name == 'release' && github.event.action == 'published' }}
+      needs: [test-linux]
+      runs-on: windows-latest
+      strategy:
+        matrix:
+          py-version: ['3.7', '3.8', '3.9', '3.10']
+      steps:
+        - uses: actions/checkout@v2
+        - uses: actions/setup-python@v2
+          with:
+            python-version: ${{ matrix.py-version }}
+
+        - name: Rust latest
+          run: rustup update
+        
+        # Installing poetry requires a different command on Windows than on macOS/Linux
+        - name: Poetry
+          run: (Invoke-WebRequest -Uri https://raw.githubusercontent.com/python-poetry/poetry/master/install-poetry.py -UseBasicParsing).Content | python -
+
+        # PATH is also different
+        - name: Poetry path
+          run: echo "$env:APPDATA\Python\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+        - name: Poetry update
+          run: |
+            poetry update
+          working-directory: ${{ github.workspace }}
+
+        - name: maturin build release
+          run: poetry run maturin build --release -i python
+          working-directory: ${{ github.workspace }}
+
+        - uses: actions/upload-artifact@v2
+          with:
+            name: wheels
+            path: ${{ github.workspace }}/target/wheels
+   wheel-publish:
+      needs: [build-manylinux, build-mac, build-windows]
+      runs-on: ubuntu-latest
+      steps:
+        - name: Download artifact
+          uses: actions/download-artifact@v2
+          with:
+            name: wheels
+            path: ${{ github.workspace }}/dist/
+        - name: Set up Python
+          uses: actions/setup-python@v2
+          with:
+            python-version: '3.9'
+        - name: Install wheel test
+          run: |
+            pip install ${{ github.workspace }}/dist/*39*manylinux*.whl
+        - name: Publish a Python distribution to PyPI
+          if: ${{ github.event_name == 'release' && github.event.action == 'published' }}
+          uses: pypa/gh-action-pypi-publish@release/v1
+          with:
+            user: __token__
+            password: ${{ secrets.PYPI_RUSTFRC_TOKEN }}
