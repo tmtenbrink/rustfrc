@@ -4,8 +4,11 @@ use std::fmt::{Display, Formatter};
 use std::marker::{Send, Sync};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use ndarray::{Array, ArrayD, Dimension};
+use ndarray::{Array, Array2, ArrayD, Axis, Dimension, Ix2, Slice};
+use ndarray::parallel::prelude::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use ndarray_rand::rand::prelude::{Distribution, thread_rng};
+use ndarray_rand::rand::rngs::SmallRng;
+use ndarray_rand::rand::{Rng, RngCore, SeedableRng};
 use ndarray_rand::rand_distr::{Binomial, Poisson, PoissonError};
 use num_complex::{Complex, Complex32, Complex64};
 use num_traits::Float;
@@ -13,6 +16,8 @@ use numpy::{IntoPyArray, PyArrayDyn, PyReadonlyArrayDyn};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::PyObject;
+use rand_xoshiro::rand_core::OsRng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 
 #[pymodule]
 fn rustfrc(py: Python<'_>, m: &PyModule) -> PyResult<()> {
@@ -74,7 +79,7 @@ fn pois_gen_py(py: Python, shape: PyObject, lambda: f64 ) -> PyResult<&PyArrayDy
 }
 
 #[derive(Debug)]
-struct ToUsizeError {}
+pub struct ToUsizeError {}
 
 impl Display for ToUsizeError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -85,9 +90,33 @@ impl Display for ToUsizeError {
 
 impl Error for ToUsizeError {}
 
+#[inline]
+pub fn binom_slit_2(mut a: Array2<i32>) -> Result<Array2<i32>, ToUsizeError> {
+    //let mut i = a.axis_chunks_iter_mut(Axis(0), 100);
+    let mut os_rng = OsRng::default();
+    let seed: [u8; 32] = os_rng.gen();
+
+    let c = a.axis_chunks_iter_mut(Axis(0), 50);
+    c.into_par_iter().enumerate().for_each(|(index, mut s)| {
+        let mut rng = Xoshiro256PlusPlus::from_seed(seed);
+        for _i in 0..index {
+            rng.jump();
+        }
+
+
+        s.mapv_inplace(|n| {
+            Binomial::new(n as u64, 0.5).unwrap().sample(&mut rng) as i32
+        });
+            ()
+    });
+
+    Ok(a)
+}
+
 /// Takes an ndarray (i32, dimension D) and splits every pixel value according to the
 /// binomial distribution (n, p) with n = element value and p = 0.5. Returns a single array.
-fn binom_split<D: Dimension>(mut a: Array<i32, D>) -> Result<Array<i32, D>, ToUsizeError> {
+#[inline]
+pub fn binom_split<D: Dimension>(mut a: Array<i32, D>) -> Result<Array<i32, D>, ToUsizeError> {
     // AtomicBool is thread-safe, and allows for communicating an error state occurred across threads
     // We initialize it with the value false, since no error occurred
     let to_unsized_failed = AtomicBool::new(false);
@@ -154,6 +183,7 @@ fn pois_gen(shape: &[usize], lambda: f64) -> Result<ArrayD<f64>, PoissonError> {
 
 #[cfg(test)]
 mod tests {
+    use std::convert::Infallible;
     use super::*;
 
     #[test]
@@ -162,6 +192,10 @@ mod tests {
             [4, 5, 6, 7]]);
         let b = binom_split(a.clone());
         let b = b.unwrap();
+
+        let x = 3;
+
+        let y = 2000;
 
         assert!(b.iter().clone().max() <= a.iter().max());
         assert!(*(b.iter().min().unwrap()) >= 0);
@@ -218,5 +252,25 @@ mod tests {
         let int_a = a.mapv(|f| f as i64);
 
         assert!(*(int_a.iter().min().unwrap()) >= 0);
+    }
+
+    #[test]
+    fn binom_2_test() {
+        let mut a = Array2::zeros((1000, 1000));
+        a.fill(100);
+
+        let c = binom_slit_2(a).unwrap();
+
+        println!("{:?}", c)
+    }
+
+    #[test]
+    fn binom_1_test() {
+        let mut a = Array2::zeros((1000, 1000));
+        a.fill(100);
+
+        let c = binom_split(a).unwrap();
+
+        println!("{:?}", c)
     }
 }
