@@ -1,5 +1,7 @@
 # rustfrc
 
+### v1.1.4 requires NumPy v1.26+ (in order to support Python 3.12) and Python 3.9+. For earlier versions, downgrade to v1.1.3.
+
 ![GitHub release](https://flat.badgen.net/github/release/tmtenbrink/rustfrc)
 ![License](https://flat.badgen.net/github/license/tmtenbrink/rustfrc)
 
@@ -17,8 +19,10 @@ Furthermore, there are also (since version 1.1) `sqr_abs(a: ndarray) -> ndarray`
 
 ## Requirements
 
-* Python 3.8-3.12
-* NumPy 1.18 or greater (tested last with v1.26)
+* Python 3.9-3.12
+* NumPy 1.26 or greater
+
+If you are on Python 3.7-3.11 or are using an earlier version of NumPy, use `v1.1.3` instead.
 
 ## Performance
 
@@ -58,24 +62,4 @@ Take a look at [PyO3](https://github.com/PyO3/pyo3) for other installation optio
 
 #### Manylinux
 
-If you want to build .whl files that are compatible with a wide range of Linux distributions and can be uploaded to PyPI, using a [manylinux](https://github.com/pypa/manylinux) container is necessary. 
-
-This example assumes a manylinux2014 (x86_64) target, using other docker base images should work to compile for other targets. Go into the `rustfrc/docker` directory and run:
-```shell
-docker pull quay.io/pypa/manylinux2014_x86_64
-docker build --no-cache -t tmtenbrink/manylinux2014-rustfrc --build-arg PY_ABI=cp39-cp39 .
-```
-
-After the image is built, run it as a container:
-```shell
-docker run -it tmtenbrink/manylinux2014-rustfrc
-```
-
-The repository should now be installed at `/opt/rustfrc`, with its dependencies and `maturin` installed. Then follow the same steps as above, but when the wheels are built run the following, which should resolve any issues: 
-```shell
-find . -name '*.whl' -exec auditwheel repair {} \;
-```
-
-The complete wheel files can now be found in a `/wheelhouse` directory.
-
-Take a look at the GitHub Actions for this project for an idea of how to automate this.
+If you want to build .whl files that are compatible with a wide range of Linux distributions and can be uploaded to PyPI, take a look at the GitHub Actions files and [pyo3/maturin-action](https://github.com/PyO3/maturin-action).
