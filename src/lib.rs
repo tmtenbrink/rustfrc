@@ -8,10 +8,11 @@ use ndarray::{Array, ArrayD, Dimension};
 use ndarray_rand::rand::prelude::{Distribution, thread_rng};
 use ndarray_rand::rand_distr::{Binomial, Poisson, PoissonError};
 use num_complex::{Complex, Complex32, Complex64};
-use num_traits::Float;
-use numpy::{IntoPyArray, PyArrayDyn, PyReadonlyArrayDyn};
+use num_traits::{Float, Zero};
+use numpy::{IntoPyArray, PyArrayDyn, PyReadonlyArrayDyn, PyArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+
 use pyo3::PyObject;
 
 #[pymodule]
@@ -35,7 +36,7 @@ fn binom_split_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, i32>) -> PyRe
     let a = a.to_owned_array();
 
     binom_split(a)
-             .map_err(|e| PyValueError::new_err(format!("{}", e.to_string())))
+             .map_err(|e| PyValueError::new_err(format!("{}", e)))
              .map(|a| a.into_pyarray(py))
 }
 
@@ -69,7 +70,7 @@ fn pois_gen_py(py: Python, shape: PyObject, lambda: f64 ) -> PyResult<&PyArrayDy
     let shape = shape_vec.as_slice();
 
     pois_gen(shape, lambda)
-        .map_err(|e| PyValueError::new_err(format!("{}", e.to_string())))
+        .map_err(|e| PyValueError::new_err(format!("{}", e)))
         .map(|a| a.into_pyarray(py))
 }
 
@@ -139,7 +140,7 @@ fn sqr_abs<D: Dimension, F: Float + Send + Sync>(mut a: Array<Complex<F>, D>) ->
 /// Generates an ndarray (dynamic dimension) by sampling a Poisson distribution with parameter
 /// lambda for each element. Takes a lambda parameter (positive f64) and a shape slice.
 fn pois_gen(shape: &[usize], lambda: f64) -> Result<ArrayD<f64>, PoissonError> {
-    if !(lambda > 0.0) {
+    if lambda.is_sign_negative() || lambda.is_infinite() || lambda.is_nan() || lambda.is_zero() {
         return Err(PoissonError::ShapeTooSmall);
     }
 
