@@ -3,13 +3,13 @@
 ![GitHub release](https://flat.badgen.net/github/release/tmtenbrink/rustfrc)
 ![License](https://flat.badgen.net/github/license/tmtenbrink/rustfrc)
 
-rustfrc is a Python package with some fast Rust functions that are using when performing Fourier Ring Correlation (FRC) computations for resolution determination in microscopy (specifically optical nanoscopy). It is in development for use in a Bachelor end project for the TU Delft in the period 2021-2022.
+rustfrc is a Python package with some fast Rust functions that are useful when performing Fourier Ring Correlation (FRC) computations for resolution determination in microscopy (specifically optical nanoscopy). It was originally developed for use in a Bachelor end project for the TU Delft in the period 2021-2022. See the Python package [`frc`](https://github.com/tmtenbrink/frc) for examples of its usage. The `test_split.py` file in the `tests` directory also holds some examples.
 
 Since rustfrc contains compiled (Rust) extensions and is not pure Python, it is not available for all platforms, but only for those with available compiled wheels or a Rust toolchain and `maturin` support (see below). They are available for Windows (x86_64), macOS (x86_64 and universal2, which includes Apple Silicon) and Linux (x86_64). However, since Rust and Python are supported on many platforms, it is not difficult to compile for other platforms (see below).
 
 ## Features
 
-Currently, rustfrc does not have many features. The primary one is `binom_split(x: ndarray) -> ndarray` which samples binomial _(n, 0.5)_ with n as the array element value. The operation is fully parallelized and somewhere between 3-10x faster than sampling using NumPy.
+rustfrc has only a few features. The primary one is `binom_split(x: ndarray) -> ndarray` which samples binomial _(n, 0.5)_ with n as the array element value. The operation is fully parallelized and somewhere between 3-10x faster than sampling using NumPy.
 
 Furthermore, there are also (since version 1.1) `sqr_abs(a: ndarray) -> ndarray` and `pois_gen(lam: float, shape: tuple[int, ...]) -> ndarray`.
 
@@ -17,8 +17,18 @@ Furthermore, there are also (since version 1.1) `sqr_abs(a: ndarray) -> ndarray`
 
 ## Requirements
 
-* Python 3.7 or greater
-* NumPy 1.18 or greater
+* Python 3.8-3.12
+* NumPy 1.18 or greater (tested last with v1.26)
+
+## Performance
+
+On an i7-8750H, a decently high performance 6-core chip from 2017, I measured the following speeds:
+
+- `binom_split`: ~210 ms on a 4000x4000 array, with each element Poisson-generated with a mean of 200
+- `pois_gen`: ~420 ms to generate a 4000x4000 array with mean 200
+- `sqr_abs`: ~40 ms on a 4000x4000 array, where each element is a complex number with both the real and imaginary parts having a mean of 200
+
+Take this with a grain of salt, but it should provide a decent order of magnitude for larger images. 
 
 ## Installation
 
@@ -32,8 +42,7 @@ However, for an optimal Python experience, use [poetry](https://github.com/pytho
 
 ### From source (using maturin)
 
-rustfrc uses [poetry](https://github.com/python-poetry/poetry) as its Python dependency manager. For best results, create a `poetry` virtualenv (be sure to install virtualenv as a systems package) with the `pyproject.toml` and run `poetry update` to install the required packages. 
- Installing [maturin](https://pypi.org/project/maturin/) manually should also work. It is also necessary to have a Rust toolchain installed on your computer. Rust can be easily installed using [rustup](https://rustup.rs/).
+rustfrc uses [poetry](https://github.com/python-poetry/poetry) as its Python dependency manager. For best results, create a `poetry` virtualenv (be sure to install virtualenv as a systems package) with the `pyproject.toml` and run `poetry update` to install the required packages. I recommend installing [maturin](https://pypi.org/project/maturin/) as a global tool (e.g. with `cargo binstall`).
 
 Build a wheel file like this (if using poetry, append `poetry run` before the command) from the project directory:
 

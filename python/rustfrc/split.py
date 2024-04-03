@@ -34,14 +34,11 @@ def sqr_abs(a: _np.ndarray) -> _np.ndarray:
 def pois_gen(lam: float, shape: tuple) -> _np.ndarray:
     """
     Generates an array (np.ndarray with dtype float64) by sampling a Poisson distribution with parameter lambda for each
-    element. Takes a lambda parameter (positive) and a shape tuple of non-negative ints. Maximum number of elements in
-    the array is 2500000000 (due to memory limitations), so the product of all the shape elements must be less.
+    element. Takes a lambda parameter (positive) and a shape tuple of non-negative ints. Due to memomry limitations it might
+    fail for larger arrays. Below 250M elements seems to work.
     :param shape: Tuple of ints determining the output array shape.
     :param lam: Lambda parameter for Poisson distribution.
     :return: Generated random array.
     """
-    too_large = 2500000000
-    if _np.prod(shape) > too_large:
-        raise ValueError("Array shape too large! Maximum element number is {}".format(too_large))
 
     return _internal.pois_gen_py(shape, lam)

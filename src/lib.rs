@@ -4,9 +4,7 @@ use std::fmt::{Display, Formatter};
 use std::marker::{Send, Sync};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use ndarray::parallel::prelude::*;
-use ndarray::parallel::prelude::IntoParallelIterator;
-use ndarray::{Array, ArrayD, ArrayView, Dimension, Zip};
+use ndarray::{Array, ArrayD, ArrayView, Dimension};
 use ndarray_rand::rand::prelude::{Distribution, thread_rng};
 use ndarray_rand::rand_distr::{Binomial, Poisson, PoissonError};
 use num_complex::{Complex, Complex32, Complex64};
@@ -68,7 +66,7 @@ fn sqr_abs64_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, Complex64>) -> 
 /// non-negative ints.
 #[pyfunction]
 #[pyo3(text_signature = "a, /")]
-fn pois_gen_py<'py>(py: Python<'py>, shape: PyObject, lambda: f64 ) -> PyResult<Bound<'py, PyArrayDyn<f64>>> {
+fn pois_gen_py(py: Python<'_>, shape: PyObject, lambda: f64 ) -> PyResult<Bound<'_, PyArrayDyn<f64>>> {
     let shape_vec: Vec<usize> = shape.extract(py)?;
     let shape = shape_vec.as_slice();
 
@@ -94,30 +92,10 @@ impl Error for ToUsizeError {}
 pub fn binom_split<D: Dimension>(mut a: Array<i32, D>) -> Result<Array<i32, D>, ToUsizeError> {
     // AtomicBool is thread-safe, and allows for communicating an error state occurred across threads
     // We initialize it with the value false, since no error occurred
+    // Note that this comes with a negligible performance penalty
     let to_unsized_failed = AtomicBool::new(false);
+    
     // We map all values in parallel, since they do not depend on each other
-
-    // let a = a.mapv(|i| {
-    //     if !to_unsized_failed.load(Ordering::Relaxed) {
-    //         // We use thread rng, which is fast
-    //         let mut rng = thread_rng();
-    //         // We try to convert i32 to u64 (which is required for Binomial)
-    //         // If it fails, we indicate a failure has occurred
-    //         // Unfortunately it is not possible to escape from the loop immediately
-    //         let n = u64::try_from(i).unwrap_or_else(|_| {
-    //             to_unsized_failed.store(true, Ordering::Relaxed);
-    //             0
-    //         });
-    //         // Since the input fit into an i32 and the binomial output is always less, we know the output
-    //         // will also fit into an i32
-    //         Binomial::new(n, 0.5).unwrap().sample(&mut rng) as i32
-    //     }
-    //     // We just keep the rest unchanged if a failure occurred
-    //     else {
-    //         i
-    //     }
-    // });
-
     a.par_mapv_inplace(|i| {
         // If no failure has occurred, we continue
         // We use Relaxed Ordering because the order in which stores and loads occur does not matter
@@ -152,14 +130,9 @@ pub fn binom_split<D: Dimension>(mut a: Array<i32, D>) -> Result<Array<i32, D>, 
 /// Takes an ndarray (dimension D and complex number of generic float F) and computes the absolute
 /// value and then square for each element.
 pub fn sqr_abs<D: Dimension, F: Float + Send + Sync>(a: Array<Complex<F>, D>) -> Array<F, D> {
-    let v: Vec<F> = a.par_iter().map(|i| i.norm_sqr()).collect();
-    let v_arr = Array::from_shape_vec(a.raw_dim(), v).unwrap();
-
-    v_arr
-
-    // a.mapv(|i| {
-    //     i.norm_sqr()
-    // })
+    a.mapv(|i| {
+        i.norm_sqr()
+    })
 }
 
 /// Generates an ndarray (dynamic dimension) by sampling a Poisson distribution with parameter
@@ -168,17 +141,6 @@ pub fn pois_gen(shape: &[usize], lambda: f64) -> Result<ArrayD<f64>, PoissonErro
     if lambda.is_sign_negative() || lambda.is_infinite() || lambda.is_nan() || lambda.is_zero() {
         return Err(PoissonError::ShapeTooSmall);
     }
-
-    // let size = shape.iter().product();
-    // let mut v = Vec::with_capacity(size);
-
-    // (0..size).into_par_iter().map(|_i| {
-    //     let mut rng = thread_rng();
-
-    //     Poisson::new(lambda).unwrap().sample(&mut rng)
-    // }).collect_into_vec(&mut v);
-
-    // let a = Array::from_shape_vec(shape, v).unwrap();
 
     let mut a = ArrayD::<f64>::from_elem(shape, lambda);
     a.par_mapv_inplace(|l| {
