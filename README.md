@@ -1,7 +1,5 @@
 # rustfrc
 
-### v1.1.4 requires NumPy v1.26+ (in order to support Python 3.12) and Python 3.9+. For earlier versions, downgrade to v1.1.3.
-
 ![GitHub release](https://flat.badgen.net/github/release/tmtenbrink/rustfrc)
 ![License](https://flat.badgen.net/github/license/tmtenbrink/rustfrc)
 
@@ -19,10 +17,8 @@ Furthermore, there are also (since version 1.1) `sqr_abs(a: ndarray) -> ndarray`
 
 ## Requirements
 
-* Python 3.9-3.12
-* NumPy 1.26 or greater
-
-If you are on Python 3.7-3.11 or are using an earlier version of NumPy, use `v1.1.3` instead.
+* Python 3.8-3.12
+* NumPy 1.18+ (exact version might depend on Python version, e.g. Python 3.12 requires NumPy 1.26)
 
 ## Performance
 

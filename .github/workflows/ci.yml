@@ -17,10 +17,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout rustfrc
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
     # Set up the repository with the Docker container action, which will allow us to build and run a manylinux Docker
     # container that will ensure compatibility. See the action repository for more info.
-    - uses: actions/setup-python@v2
+    - uses: actions/setup-python@v5
+      id: setup-py
       with:
         python-version: ${{ matrix.py-version }}
 
@@ -33,17 +34,18 @@ jobs:
       with:
         tool: maturin
 
-    # poetry update will install all dependencies for our package, as well as maturin, which we use as our build
-    # back-end
+    # poetry update will install all dependencies for our package
     - name: Poetry install
-      run: poetry install --sync --no-root
+      run: |
+        poetry env use '${{ steps.setup-py.outputs.python-path }}'
+        poetry install --sync --no-root
       working-directory: ${{ github.workspace }}
 
     - name: Test lower version
       if: ${{ matrix.py-version == '3.8' }}
       run: |
         . $(poetry env info --path)/bin/activate
-        pip install numpy==1.18.0
+        pip install numpy==1.18.0 --only-binary true
       working-directory: ${{ github.workspace }}
       
     - name: maturin develop
@@ -68,8 +70,8 @@ jobs:
       matrix:
         py-version: [ '3.9', '3.10', '3.11', '3.12' ]
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.py-version }}
       # The x86_64 Rust toolchain is installed on GitHub runners, but since we compile also for Apple Silicon, we also
@@ -96,8 +98,8 @@ jobs:
       matrix:
         py-version: ['3.9', '3.10', '3.11', '3.12']
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.py-version }}
       - name: Build wheels
@@ -119,8 +121,8 @@ jobs:
       matrix:
         py-version: [ '3.9', '3.10', '3.11', '3.12' ]
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.py-version }}
       - name: Build wheels
