@@ -3,7 +3,7 @@ name = "rustfrc"
 version = "1.1.4"
 description = "Fast utility functions useful for Fourier Ring/Shell Correlation: binom_split, pois_gen, square_abs."
 readme = "README.md"
-requires-python = ">=3.9, <3.13"
+requires-python = ">=3.8, <3.13"
 license = {text = "Apache-2.0"}
 authors = [
   {email = "T.M.tenBrink@student.tudelft.nl"},
@@ -29,8 +29,8 @@ description = "Fast utility functions useful for Fourier Ring/Shell Correlation:
 authors = ["Tip ten Brink <T.M.tenBrink@student.tudelft.nl>"]
 
 [tool.poetry.dependencies]
-python = ">= 3.9, <3.13"
-numpy = "^1.26"
+python = ">= 3.8, <3.13"
+numpy = "^1.18"
 
 [tool.poetry.dev-dependencies]
 pytest = "^8.1.1"

@@ -13,7 +13,7 @@ jobs:
   test-linux:
     strategy:
       matrix:
-        py-version: ['3.9', '3.10', '3.11', '3.12']
+        py-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
     runs-on: ubuntu-latest
     steps:
     - name: Checkout rustfrc
@@ -37,6 +37,13 @@ jobs:
     # back-end
     - name: Poetry install
       run: poetry install --sync --no-root
+      working-directory: ${{ github.workspace }}
+
+    - name: Test lower version
+      if: ${{ matrix.py-version == '3.8' }}
+      run: |
+        . $(poetry env info --path)/bin/activate
+        pip install numpy==1.18.0
       working-directory: ${{ github.workspace }}
       
     - name: maturin develop
