@@ -68,7 +68,7 @@ jobs:
     runs-on: macos-latest
     strategy:
       matrix:
-        py-version: [ '3.9', '3.10', '3.11', '3.12' ]
+        py-version: [ '3.8', '3.9', '3.10', '3.11', '3.12' ]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -96,7 +96,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        py-version: ['3.9', '3.10', '3.11', '3.12']
+        py-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -119,7 +119,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        py-version: [ '3.9', '3.10', '3.11', '3.12' ]
+        py-version: [ '3.8', '3.9', '3.10', '3.11', '3.12' ]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
