@@ -5,7 +5,7 @@ edition = "2021"
 
 [lib]
 name = "rustfrc"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "lib"]
 
 [dependencies]
 numpy = "~0.21"
@@ -16,7 +16,14 @@ num-traits = "~0.2.18"
 
 [dependencies.pyo3]
 version = "~0.21.1"
-features = ["extension-module", "gil-refs"]
+features = ["extension-module"]
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "rustfrc_bench"
+harness = false
 
 [package.metadata.maturin]
 python-source = "python"
