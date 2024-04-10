@@ -44,8 +44,6 @@ fn rotl(a0: u32, a1: u32, k: u32) -> array<u32, 2> {
     var b1: u32 = l[1] | r[1];
 
     return array<u32, 2>(b0, b1);
-
-//    (x << k) | (x >> (64 - k));
 }
 
 @group(0)

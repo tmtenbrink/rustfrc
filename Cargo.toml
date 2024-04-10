@@ -8,28 +8,28 @@ name = "rustfrc"
 crate-type = ["lib"]
 
 [dependencies]
-numpy = "~0.14"
+# numpy = "~0.21"
 ndarray = { version = "~0.15", features = ["rayon"] }
 ndarray-rand = "~0.14"
-num-complex = "~0.4.0"
-num-traits = "~0.2.14"
+num-complex = "~0.4.5"
+num-traits = "~0.2.18"
 rand_xoshiro = "0.6.0"
-wgpu = "0.16.1"
+wgpu = "0.19"
 bytemuck = "1.13.1"
 env_logger = "0.10.0"
 futures-intrusive = "0.5.0"
-pollster = "0.3.0"
+pollster = { version = "0.3.0", features = ["macro"] }
 
 [dev-dependencies]
-criterion = "0.4.0"
+criterion = "0.3"
 
-[dependencies.pyo3]
-version = "~0.14"
-features = ["extension-module"]
+# [dependencies.pyo3]
+# version = "~0.21"
+# features = ["extension-module"]
 
 [package.metadata.maturin]
 python-source = "python"
 
-[[bench]]
-name = "binom_bench"
-harness = false
+# [[bench]]
+# name = "rustfrc_bench"
+# harness = false

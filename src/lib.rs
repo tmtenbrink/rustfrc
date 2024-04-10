@@ -1,276 +1,357 @@
-use std::convert::TryFrom;
-use std::error::Error;
-use std::fmt::{Display, Formatter};
-use std::marker::{Send, Sync};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::borrow::Cow;
+use std::time::Instant;
+use ndarray_rand::rand::Rng;
+use ndarray_rand::rand::rngs::OsRng;
+use wgpu::util::DeviceExt;
 
-use ndarray::{Array, Array2, ArrayD, Axis, Dimension, Ix2, Slice};
-use ndarray::parallel::prelude::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
-use ndarray_rand::rand::prelude::{Distribution, thread_rng};
-use ndarray_rand::rand::rngs::SmallRng;
-use ndarray_rand::rand::{Rng, RngCore, SeedableRng};
-use ndarray_rand::rand_distr::{Binomial, Poisson, PoissonError};
-use num_complex::{Complex, Complex32, Complex64};
-use num_traits::Float;
-use numpy::{IntoPyArray, PyArrayDyn, PyReadonlyArrayDyn};
-use pyo3::exceptions::PyValueError;
-use pyo3::prelude::*;
-use pyo3::PyObject;
-use rand_xoshiro::rand_core::OsRng;
-use rand_xoshiro::Xoshiro256PlusPlus;
-
-#[pymodule]
-fn rustfrc(py: Python<'_>, m: &PyModule) -> PyResult<()> {
-    let internal = PyModule::new(py, "_internal")?;
-    internal.add_function(wrap_pyfunction!(binom_split_py, internal)?)?;
-    internal.add_function(wrap_pyfunction!(sqr_abs32_py, internal)?)?;
-    internal.add_function(wrap_pyfunction!(sqr_abs64_py, internal)?)?;
-    internal.add_function(wrap_pyfunction!(pois_gen_py, internal)?)?;
-
-    m.add_submodule(internal)?;
-
-    Ok(())
+fn u32_from_64 (u: u64) -> [u32; 2] {
+    let leading_part = u >> 32;
+    let trailing_part = (u ^ (leading_part << 32)) as u32; 
+    [leading_part as u32, trailing_part]
 }
 
-/// Takes an array (np.ndarray with dtype i32) and splits every pixel value according to the
-/// binomial distribution (n, p) with n = pixel value and p = 0.5. Returns a single array.
-#[pyfunction]
-#[pyo3(text_signature = "a, /")]
-fn binom_split_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, i32>) -> PyResult<&'py PyArrayDyn<i32>> {
-    let a = a.to_owned_array();
-
-    binom_split(a)
-             .map_err(|e| PyValueError::new_err(format!("{}", e.to_string())))
-             .map(|a| a.into_pyarray(py))
+fn u64_from_2_32 (a: &[u32; 2]) -> u64 {
+    let trailing_part = a[1] as u64;
+    let leading_part = (a[0] as u64) << 32;
+    trailing_part + leading_part
 }
 
-/// Takes an array (np.ndarray with dtype complex64) and takes the absolute value and then squares
-/// it, element-wise.
-#[pyfunction]
-#[pyo3(text_signature = "a, /")]
-fn sqr_abs32_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, Complex32>) -> &'py PyArrayDyn<f32> {
-    let a = a.to_owned_array();
-
-    sqr_abs(a).into_pyarray(py)
-}
-
-/// Takes an array (np.ndarray with dtype complex128) and takes the absolute value and then squares
-/// it, element-wise.
-#[pyfunction]
-#[pyo3(text_signature = "a, /")]
-fn sqr_abs64_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, Complex64>) -> &'py PyArrayDyn<f64> {
-    let a = a.to_owned_array();
-
-    sqr_abs(a).into_pyarray(py)
-}
-
-/// Generates an array (np.ndarray with dtype float64) by sampling a Poisson distribution with
-/// parameter lambda for each element. Takes a lambda parameter (positive) and a shape tuple of
-/// non-negative ints.
-#[pyfunction]
-#[pyo3(text_signature = "a, /")]
-fn pois_gen_py(py: Python, shape: PyObject, lambda: f64 ) -> PyResult<&PyArrayDyn<f64>> {
-    let shape_vec: Vec<usize> = shape.extract(py)?;
-    let shape = shape_vec.as_slice();
-
-    pois_gen(shape, lambda)
-        .map_err(|e| PyValueError::new_err(format!("{}", e.to_string())))
-        .map(|a| a.into_pyarray(py))
-}
-
-#[derive(Debug)]
-pub struct ToUsizeError {}
-
-impl Display for ToUsizeError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("Value in array a cannot be cast to u64. All array \
-        values must be non-negative."))
+fn vec_u32_from_64 (u_vec: Vec<u64>) -> Vec<u32> {
+    let mut out: Vec<u32> = Vec::with_capacity(u_vec.len()*2);
+    for u in u_vec {
+        let u32_arr = u32_from_64(u);
+        out.push(u32_arr[0]);
+        out.push(u32_arr[1]);
     }
+    out
 }
 
-impl Error for ToUsizeError {}
+fn vec_u64_from_2_32 (u_vec: Vec<u32>) -> Vec<u64> {
+    if u_vec.len() % 2 != 0 {
+        panic!("Length must be multiple of 2!")
+    }
+    let mut out: Vec<u64> = Vec::with_capacity(u_vec.len()/2);
+    for u in u_vec.chunks_exact(2) {
+        out.push(u64_from_2_32(u.try_into().unwrap()))
+    }
+    out
+}
 
-#[inline]
-pub fn binom_slit_2(mut a: Array2<i32>) -> Result<Array2<i32>, ToUsizeError> {
-    //let mut i = a.axis_chunks_iter_mut(Axis(0), 100);
+
+pub async fn run() {
+    let now = Instant::now();
+    println!("{} pre", now.elapsed().as_secs_f64());
     let mut os_rng = OsRng::default();
-    let seed: [u8; 32] = os_rng.gen();
-
-    let c = a.axis_chunks_iter_mut(Axis(0), 50);
-    c.into_par_iter().enumerate().for_each(|(index, mut s)| {
-        let mut rng = Xoshiro256PlusPlus::from_seed(seed);
-        for _i in 0..index {
-            rng.jump();
-        }
-
-
-        s.mapv_inplace(|n| {
-            Binomial::new(n as u64, 0.5).unwrap().sample(&mut rng) as i32
-        });
-            ()
-    });
-
-    Ok(a)
+    let seed: [u32; 8] = os_rng.gen();
+    println!("{} genned", now.elapsed().as_secs_f64());
+    let gpu_add = execute_gpu("main", &seed).await.unwrap();
+    println!("{} did exec", now.elapsed().as_secs_f64());
+    let gpu_add_64 = vec_u64_from_2_32(gpu_add.clone());
+    println!("{} to u64", now.elapsed().as_secs_f64());
+    //println!("Seed: [{:?}]", seed_to_64);
+    println!("New: [{:?}]", gpu_add_64.iter().take(30).collect::<Vec<&u64>>());
+    let first_zero = gpu_add_64.iter().position(|u| *u == 0).unwrap_or(10);
+    println!("New: [{:?}]", first_zero);
+    println!("Length: [{:?}]", gpu_add_64.len());
+    println!("New: [{:?}]", &gpu_add_64[(first_zero-5)..(first_zero+20)]);
+    println!("{} fin", now.elapsed().as_secs_f64());
+    //println!("New Rust: [{:?}]", seed_add);
+    
 }
 
-/// Takes an ndarray (i32, dimension D) and splits every pixel value according to the
-/// binomial distribution (n, p) with n = element value and p = 0.5. Returns a single array.
-#[inline]
-pub fn binom_split<D: Dimension>(mut a: Array<i32, D>) -> Result<Array<i32, D>, ToUsizeError> {
-    // AtomicBool is thread-safe, and allows for communicating an error state occurred across threads
-    // We initialize it with the value false, since no error occurred
-    let to_unsized_failed = AtomicBool::new(false);
-    // We map all values in parallel, since they do not depend on each other
+async fn execute_gpu(entry: &'static str, seed: &[u32; 8]) -> Option<Vec<u32>> {
+    let now = Instant::now();
+    println!("eg {}", now.elapsed().as_secs_f64());
+    // Instantiates instance of WebGPU
+    let instance = wgpu::Instance::default();
 
-    a.par_mapv_inplace(|i| {
-        // If no failure has occurred, we continue
-        // We use Relaxed Ordering because the order in which stores and loads occur does not matter
-        // Once it is set to true, it will stay true, when exactly that happens does not matter
-        if !to_unsized_failed.load(Ordering::Relaxed) {
-            // We use thread rng, which is fast
-            let mut rng = thread_rng();
-            // We try to convert i32 to u64 (which is required for Binomial)
-            // If it fails, we indicate a failure has occurred
-            // Unfortunately it is not possible to escape from the loop immediately
-            let n = u64::try_from(i).unwrap_or_else(|_| {
-                to_unsized_failed.store(true, Ordering::Relaxed);
-                0
-            });
-            Binomial::new(n, 0.5).unwrap().sample(&mut rng) as i32
-        }
-        // We just keep the rest unchanged if a failure occurred
-        else {
-            i
-        }
+    // `request_adapter` instantiates the general connection to the GPU
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions::default())
+        .await?;
+
+    println!("eg {} adapt", now.elapsed().as_secs_f64());
+
+    // `request_device` instantiates the feature specific connection to the GPU, defining some parameters,
+    //  `features` being the available features.
+    let (device, queue) = adapter
+        .request_device(
+            &wgpu::DeviceDescriptor {
+                label: None,
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_defaults(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+        println!("eg {} device", now.elapsed().as_secs_f64());
+
+    let info = adapter.get_info();
+    // skip this on LavaPipe temporarily
+    if info.vendor == 0x10005 {
+        return None;
+    }
+
+    // 1600 seems sweet spot
+    // The total latency of going to GPU and back is around 140 ms
+    execute_gpu_inner(entry, &device, &queue, seed, 1).await
+}
+
+const WORKGROUP_SIZE: u32 = 256;
+// The buffer limit is around 256 MB
+
+async fn execute_gpu_inner(
+    entry: &'static str,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    seed: &[u32; 8],
+    dispatch_size: u32
+) -> Option<Vec<u32>> {
+    // Loads the shader from WGSL
+    let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: None,
+        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("compute3.wgsl"))),
     });
-    let to_unsized_failed = to_unsized_failed.into_inner();
-    if to_unsized_failed {
-        Err(ToUsizeError {})
+    let now = Instant::now();
+    println!("ig {} mod", now.elapsed().as_secs_f64());
+
+    let zero: Vec<u32> = vec![0; (dispatch_size*WORKGROUP_SIZE).try_into().unwrap()];
+    //let v_big_zero = v_big.as_slice();
+
+    // Gets the size in bytes of the buffer.
+    let slice_size = zero.len() * std::mem::size_of::<u32>();
+    let size = slice_size as wgpu::BufferAddress;
+
+    // Instantiates buffer without data.
+    // `usage` of buffer specifies how it can be used:
+    //   `BufferUsages::MAP_READ` allows it to be read (outside the shader).
+    //   `BufferUsages::COPY_DST` allows it to be the destination of the copy.
+    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let storage_buffer_out = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Storage Buffer"),
+        contents: bytemuck::cast_slice(&zero),
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
+    });
+
+    // Instantiates buffer with data (`numbers`).
+    // Usage allowing the buffer to be:
+    //   A storage buffer (can be bound within a bind group and thus available to a shader).
+    //   The destination of a copy.
+    //   The source of a copy.
+    let storage_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Input Buffer"),
+        contents: bytemuck::cast_slice(seed),
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC,
+    });
+
+    println!("ig {} buf", now.elapsed().as_secs_f64());
+
+    // A bind group defines how buffers are accessed by shaders.
+    // It is to WebGPU what a descriptor set is to Vulkan.
+    // `binding` here refers to the `binding` of a buffer in the shader (`layout(set = 0, binding = 0) buffer`).
+
+    // A pipeline specifies the operation of a shader
+
+    // Instantiates the pipeline.
+    let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: None,
+        module: &cs_module,
+        entry_point: entry,
+    });
+
+    // Instantiates the bind group, once again specifying the binding of buffers.
+    let bind_group_layout = compute_pipeline.get_bind_group_layout(0);
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: storage_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: storage_buffer_out.as_entire_binding(),
+            }
+        ],
+    });
+
+    println!("ig {} bind", now.elapsed().as_secs_f64());
+
+    // A command encoder executes one or many pipelines.
+    // It is to WebGPU what a command buffer is to Vulkan.
+    let mut encoder =
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    {
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
+        cpass.set_pipeline(&compute_pipeline);
+        cpass.set_bind_group(0, &bind_group, &[]);
+        cpass.insert_debug_marker("compute seeds");
+        cpass.dispatch_workgroups(dispatch_size, 1, 1); // Number of cells to run, the (x,y,z) size of item being processed
+    }
+
+    println!("ig {} dispatched", now.elapsed().as_secs_f64());
+    // Sets adds copy operation to command encoder.
+    // Will copy data from storage buffer on GPU to staging buffer on CPU.
+    encoder.copy_buffer_to_buffer(&storage_buffer_out, 0, &staging_buffer, 0, size);
+
+    println!("ig {} copy", now.elapsed().as_secs_f64());
+
+    // Submits command encoder for processing
+    queue.submit(Some(encoder.finish()));
+
+    // Note that we're not calling `.await` here.
+    let buffer_slice = staging_buffer.slice(..);
+    // Sets the buffer up for mapping, sending over the result of the mapping back to us when it is finished.
+    let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+    buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+
+    println!("ig {} map", now.elapsed().as_secs_f64());
+
+    // Poll the device in a blocking manner so that our future resolves.
+    // In an actual application, `device.poll(...)` should
+    // be called in an event loop or on another thread.
+    device.poll(wgpu::Maintain::Wait);
+
+    println!("ig {} resolved", now.elapsed().as_secs_f64());
+
+    // Awaits until `buffer_future` can be read from
+    if let Some(Ok(())) = receiver.receive().await {
+        // Gets contents of buffer
+        let data = buffer_slice.get_mapped_range();
+        // Since contents are got in bytes, this converts these bytes back to u32
+        let result = bytemuck::cast_slice(&data).to_vec();
+
+        println!("ig {} cast", now.elapsed().as_secs_f64());
+
+        // With the current interface, we have to make sure all mapped views are
+        // dropped before we unmap the buffer.
+        drop(data);
+        staging_buffer.unmap(); // Unmaps buffer from memory
+        // If you are familiar with C++ these 2 lines can be thought of similarly to:
+        //   delete myPointer;
+        //   myPointer = NULL;
+        // It effectively frees the memory
+
+        // Returns data from buffer
+        Some(result)
     } else {
-        Ok(a)
+        panic!("failed to run compute on gpu!")
     }
 }
 
-/// Takes an ndarray (dimension D and complex number of generic float F) and computes the absolute
-/// value and then square for each element.
-fn sqr_abs<D: Dimension, F: Float + Send + Sync>(mut a: Array<Complex<F>, D>) -> Array<F, D> {
-    // We map all values in parallel, since they do not depend on each other
-    // As there is no standard parallel map, we first map in place
-    a.par_mapv_inplace(|i| { let c: Complex<F> = Complex::from({
-        i.norm_sqr()
-    }); c });
-    // Then we get the real part
-    a.mapv(|i| {
-        i.re
-    })
+fn rotl(x: u64, k: u64) -> u64 {
+    (x << k) | (x >> (64 - k))
 }
 
-/// Generates an ndarray (dynamic dimension) by sampling a Poisson distribution with parameter
-/// lambda for each element. Takes a lambda parameter (positive f64) and a shape slice.
-fn pois_gen(shape: &[usize], lambda: f64) -> Result<ArrayD<f64>, PoissonError> {
-    if !(lambda > 0.0) {
-        return Err(PoissonError::ShapeTooSmall);
-    }
-
-    let mut a = ArrayD::<f64>::from_elem(shape, lambda);
-    a.par_mapv_inplace(|l| {
-        let mut rng = thread_rng();
-
-        Poisson::new(l).unwrap().sample(&mut rng)
-    });
-    Ok(a)
-}
 
 #[cfg(test)]
 mod tests {
-    use std::convert::Infallible;
     use super::*;
-
-    #[test]
-    fn binom_split_2d() {
-        let a: ndarray::Array2<i32> = ndarray::arr2(&[[9, 9, 2, 3],
-            [4, 5, 6, 7]]);
-        let b = binom_split(a.clone());
-        let b = b.unwrap();
-
-        let x = 3;
-
-        let y = 2000;
-
-        assert!(b.iter().clone().max() <= a.iter().max());
-        assert!(*(b.iter().min().unwrap()) >= 0);
+    
+    #[pollster::test]
+    async fn test_lshift_eq() {
+        let mut os_rng = OsRng::default();
+        let seed: [u32; 8] = os_rng.gen();
+        let seed_to_64 = vec_u64_from_2_32(Vec::from(seed.to_owned()));
+        let seed_shift: Vec<u64> = seed_to_64.iter().map(|u| u << 5).collect();
+        let gpu_shift = execute_gpu("main_lshift_5", &seed).await.unwrap();
+        let gpu_shift = vec_u64_from_2_32(gpu_shift);
+        seed_shift.iter().zip(gpu_shift.iter()).for_each(|(r, g)| {
+            assert_eq!(r, g)
+        });
     }
 
-    #[test]
-    fn binom_split_negative() {
-        let a: ndarray::Array2<i32> = ndarray::arr2(&[[9, -9, 2, 3],
-            [4, 5, 6, 7]]);
-        let b = binom_split(a);
-
-        assert!(b.is_err());
+    #[pollster::test]
+    async fn test_lshift_33_eq() {
+        let mut os_rng = OsRng::default();
+        let seed: [u32; 8] = os_rng.gen();
+        let seed_to_64 = vec_u64_from_2_32(Vec::from(seed.to_owned()));
+        let seed_shift: Vec<u64> = seed_to_64.iter().map(|u| u << 33).collect();
+        let gpu_shift = execute_gpu("main_lshift_33", &seed).await.unwrap();
+        let gpu_shift = vec_u64_from_2_32(gpu_shift);
+        seed_shift.iter().zip(gpu_shift.iter()).for_each(|(r, g)| {
+            assert_eq!(r, g)
+        });
     }
 
-    #[test]
-    fn binom_split_1_element() {
-        let a: ndarray::Array1<i32> = ndarray::arr1(&[0]);
-        let b = binom_split(a);
-        assert_eq!(b.unwrap(), ndarray::arr1(&[0]));
+    #[pollster::test]
+    async fn test_rshift_7_eq() {
+        let mut os_rng = OsRng::default();
+        let seed: [u32; 8] = os_rng.gen();
+        let seed_to_64 = vec_u64_from_2_32(Vec::from(seed.to_owned()));
+        let seed_shift: Vec<u64> = seed_to_64.iter().map(|u| u >> 7).collect();
+        let gpu_shift = execute_gpu("main_rshift_7", &seed).await.unwrap();
+        let gpu_shift = vec_u64_from_2_32(gpu_shift);
+        seed_shift.iter().zip(gpu_shift.iter()).for_each(|(r, g)| {
+            assert_eq!(r, g)
+        });
     }
 
-    #[test]
-    fn binom_split_large_d() {
-        let a1 = ndarray::arr3(&[ [[2, 3], [4, 3]],
-            [[2, 9], [4, 5]], [[9, 7], [2, 3]] ]);
-        let a2 = ndarray::stack(ndarray::Axis(0), &[a1.view(), a1.view()]).unwrap();
-        let a3 = ndarray::stack(ndarray::Axis(0), &[a2.view(), a2.view()]).unwrap();
-        let a4 = ndarray::stack(ndarray::Axis(0), &[a3.view(), a3.view()]).unwrap();
-        let a5 = ndarray::stack(ndarray::Axis(0), &[a4.view(), a4.view()]).unwrap();
-        let a6 = ndarray::stack(ndarray::Axis(0), &[a5.view(), a5.view()]).unwrap();
-
-        let b = binom_split(a6);
-        assert!(b.is_ok());
+    #[pollster::test]
+    async fn test_rshift_35_eq() {
+        let mut os_rng = OsRng::default();
+        let seed: [u32; 8] = os_rng.gen();
+        let seed_to_64 = vec_u64_from_2_32(Vec::from(seed.to_owned()));
+        let seed_shift: Vec<u64> = seed_to_64.iter().map(|u| u >> 35).collect();
+        let gpu_shift = execute_gpu("main_rshift_35", &seed).await.unwrap();
+        let gpu_shift = vec_u64_from_2_32(gpu_shift);
+        seed_shift.iter().zip(gpu_shift.iter()).for_each(|(r, g)| {
+            assert_eq!(r, g)
+        });
     }
 
-    #[test]
-    fn sqr_abs_test() {
-        let a: ndarray::Array2<Complex32> = ndarray::arr2(&[[Complex32::new(3., 4.),
-            Complex32::new(3.32, 1.532)],
-            [Complex32::new(-2., 5.), Complex32::new(582., -423.)]]);
-
-        let b = sqr_abs(a);
-        let a: ndarray::Array2<f32> = ndarray::arr2(&[[25., 13.369424], [29., 517653.]]);
-        assert_eq!(a, b);
+    #[pollster::test]
+    async fn test_add_eq() {
+        let mut os_rng = OsRng::default();
+        let seed: [u64; 4] = os_rng.gen();
+        let seed_to_64: Vec<u64> = seed.iter().map(|u| u/2).collect();
+        let seed = vec_u32_from_64(seed_to_64.to_owned());
+        let seed_add: Vec<u64> = seed_to_64.chunks_exact(2).map(|u_arr| u_arr[0] + u_arr[1]).collect();
+        let gpu_add = execute_gpu("main_add", &seed.clone().try_into().unwrap()).await.unwrap();
+        let gpu_add_64 = vec_u64_from_2_32(gpu_add.clone());
+        seed_add.iter().zip(gpu_add_64.iter()).for_each(|(r, g)| {
+            assert_eq!(r, g)
+        });
     }
 
-    #[test]
-    fn pois_gen_test() {
-        let shape: &[usize] = &[2, 3, 1];
-        let lam = 20.0;
-
-        let a = pois_gen(shape, lam).unwrap();
-
-        let int_a = a.mapv(|f| f as i64);
-
-        assert!(*(int_a.iter().min().unwrap()) >= 0);
+    #[pollster::test]
+    async fn test_rotl_eq() {
+        let mut os_rng = OsRng::default();
+        let seed: [u64; 4] = os_rng.gen();
+        let seed_to_64: Vec<u64> = seed.iter().map(|u| u/2).collect();
+        let seed = vec_u32_from_64(seed_to_64.to_owned());
+        let seed_rotl: Vec<u64> = seed_to_64.iter().map(|u| rotl(*u, 23u64)).collect();
+        let gpu_rotl = execute_gpu("main_rotl_23", &seed.clone().try_into().unwrap()).await.unwrap();
+        let gpu_rotl_64 = vec_u64_from_2_32(gpu_rotl.clone());
+        seed_rotl.iter().zip(gpu_rotl_64.iter()).for_each(|(r, g)| {
+            assert_eq!(r, g)
+        });
     }
 
-    #[test]
-    fn binom_2_test() {
-        let mut a = Array2::zeros((1000, 1000));
-        a.fill(100);
-
-        let c = binom_slit_2(a).unwrap();
-
-        println!("{:?}", c)
-    }
-
-    #[test]
-    fn binom_1_test() {
-        let mut a = Array2::zeros((1000, 1000));
-        a.fill(100);
-
-        let c = binom_split(a).unwrap();
-
-        println!("{:?}", c)
+    #[pollster::test]
+    async fn test_rotl_45_eq() {
+        let mut os_rng = OsRng::default();
+        let seed: [u64; 4] = os_rng.gen();
+        let seed_to_64: Vec<u64> = seed.iter().map(|u| u/2).collect();
+        let seed = vec_u32_from_64(seed_to_64.to_owned());
+        let seed_rotl: Vec<u64> = seed_to_64.iter().map(|u| rotl(*u, 45u64)).collect();
+        let gpu_rotl = execute_gpu("main_rotl_45", &seed.clone().try_into().unwrap()).await.unwrap();
+        let gpu_rotl_64 = vec_u64_from_2_32(gpu_rotl.clone());
+        seed_rotl.iter().zip(gpu_rotl_64.iter()).for_each(|(r, g)| {
+            assert_eq!(r, g)
+        });
     }
 }
