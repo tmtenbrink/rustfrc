@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::time::Instant;
-use ndarray_rand::rand::Rng;
+use ndarray_rand::rand::{Rng, thread_rng};
 use ndarray_rand::rand::rngs::OsRng;
 use wgpu::util::DeviceExt;
 
@@ -40,28 +40,37 @@ fn vec_u64_from_2_32 (u_vec: Vec<u32>) -> Vec<u64> {
 
 pub async fn run() {
     let now = Instant::now();
-    println!("{} pre", now.elapsed().as_secs_f64());
+    
+    
+    println!("{} pre", now.elapsed().as_millis());
     let mut os_rng = OsRng::default();
+    // let mut rng = thread_rng();
+    // let mut thr_vec: Vec<u64> = Vec::with_capacity(4096*1000);
+    // for _i in 0..1000 {
+    //     let mut arr2 = [0u64; 4096];
+    //     rng.fill(&mut arr2); 
+    //     thr_vec.extend_from_slice(&arr2)
+    // }
+
     let seed: [u32; 8] = os_rng.gen();
-    println!("{} genned", now.elapsed().as_secs_f64());
+    println!("{} genned", now.elapsed().as_millis());
     let gpu_add = execute_gpu("main", &seed).await.unwrap();
-    println!("{} did exec", now.elapsed().as_secs_f64());
+    println!("{} did exec", now.elapsed().as_millis());
     let gpu_add_64 = vec_u64_from_2_32(gpu_add.clone());
-    println!("{} to u64", now.elapsed().as_secs_f64());
+    println!("{} to u64", now.elapsed().as_millis());
     //println!("Seed: [{:?}]", seed_to_64);
     println!("New: [{:?}]", gpu_add_64.iter().take(30).collect::<Vec<&u64>>());
-    let first_zero = gpu_add_64.iter().position(|u| *u == 0).unwrap_or(10);
-    println!("New: [{:?}]", first_zero);
+    let nonzeros = gpu_add_64.iter().filter(|u| **u != 0).count();
+    println!("Nonzeros: [{:?}]", nonzeros);
     println!("Length: [{:?}]", gpu_add_64.len());
-    println!("New: [{:?}]", &gpu_add_64[(first_zero-5)..(first_zero+20)]);
-    println!("{} fin", now.elapsed().as_secs_f64());
+    println!("{} fin", now.elapsed().as_millis());
     //println!("New Rust: [{:?}]", seed_add);
     
 }
 
 async fn execute_gpu(entry: &'static str, seed: &[u32; 8]) -> Option<Vec<u32>> {
     let now = Instant::now();
-    println!("eg {}", now.elapsed().as_secs_f64());
+    println!("eg {}", now.elapsed().as_millis());
     // Instantiates instance of WebGPU
     let instance = wgpu::Instance::default();
 
@@ -70,7 +79,7 @@ async fn execute_gpu(entry: &'static str, seed: &[u32; 8]) -> Option<Vec<u32>> {
         .request_adapter(&wgpu::RequestAdapterOptions::default())
         .await?;
 
-    println!("eg {} adapt", now.elapsed().as_secs_f64());
+    println!("eg {} adapt", now.elapsed().as_millis());
 
     // `request_device` instantiates the feature specific connection to the GPU, defining some parameters,
     //  `features` being the available features.
@@ -86,7 +95,7 @@ async fn execute_gpu(entry: &'static str, seed: &[u32; 8]) -> Option<Vec<u32>> {
         .await
         .unwrap();
 
-        println!("eg {} device", now.elapsed().as_secs_f64());
+        println!("eg {} device", now.elapsed().as_millis());
 
     let info = adapter.get_info();
     // skip this on LavaPipe temporarily
@@ -95,8 +104,10 @@ async fn execute_gpu(entry: &'static str, seed: &[u32; 8]) -> Option<Vec<u32>> {
     }
 
     // 1600 seems sweet spot
-    // The total latency of going to GPU and back is around 140 ms
-    execute_gpu_inner(entry, &device, &queue, seed, 1).await
+    // After 6500+ it doesn't seem to work anymore
+    // The total latency of starting and connecting the device is ~120+ ms
+    // Then around 10 ms for the actual compu in the case of just 1 dispatched workgroup
+    execute_gpu_inner(entry, &device, &queue, seed, 1000).await
 }
 
 const WORKGROUP_SIZE: u32 = 256;
@@ -115,7 +126,7 @@ async fn execute_gpu_inner(
         source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("compute3.wgsl"))),
     });
     let now = Instant::now();
-    println!("ig {} mod", now.elapsed().as_secs_f64());
+    println!("ig {} mod", now.elapsed().as_millis());
 
     let zero: Vec<u32> = vec![0; (dispatch_size*WORKGROUP_SIZE).try_into().unwrap()];
     //let v_big_zero = v_big.as_slice();
@@ -155,7 +166,7 @@ async fn execute_gpu_inner(
             | wgpu::BufferUsages::COPY_SRC,
     });
 
-    println!("ig {} buf", now.elapsed().as_secs_f64());
+    println!("ig {} buf", now.elapsed().as_millis());
 
     // A bind group defines how buffers are accessed by shaders.
     // It is to WebGPU what a descriptor set is to Vulkan.
@@ -188,7 +199,7 @@ async fn execute_gpu_inner(
         ],
     });
 
-    println!("ig {} bind", now.elapsed().as_secs_f64());
+    println!("ig {} bind", now.elapsed().as_millis());
 
     // A command encoder executes one or many pipelines.
     // It is to WebGPU what a command buffer is to Vulkan.
@@ -199,15 +210,15 @@ async fn execute_gpu_inner(
         cpass.set_pipeline(&compute_pipeline);
         cpass.set_bind_group(0, &bind_group, &[]);
         cpass.insert_debug_marker("compute seeds");
-        cpass.dispatch_workgroups(dispatch_size, 1, 1); // Number of cells to run, the (x,y,z) size of item being processed
+        cpass.dispatch_workgroups(25, 40, 1); // Number of cells to run, the (x,y,z) size of item being processed
     }
 
-    println!("ig {} dispatched", now.elapsed().as_secs_f64());
+    println!("ig {} dispatched", now.elapsed().as_millis());
     // Sets adds copy operation to command encoder.
     // Will copy data from storage buffer on GPU to staging buffer on CPU.
     encoder.copy_buffer_to_buffer(&storage_buffer_out, 0, &staging_buffer, 0, size);
 
-    println!("ig {} copy", now.elapsed().as_secs_f64());
+    println!("ig {} copy", now.elapsed().as_millis());
 
     // Submits command encoder for processing
     queue.submit(Some(encoder.finish()));
@@ -218,14 +229,14 @@ async fn execute_gpu_inner(
     let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
     buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
-    println!("ig {} map", now.elapsed().as_secs_f64());
+    println!("ig {} map", now.elapsed().as_millis());
 
     // Poll the device in a blocking manner so that our future resolves.
     // In an actual application, `device.poll(...)` should
     // be called in an event loop or on another thread.
     device.poll(wgpu::Maintain::Wait);
 
-    println!("ig {} resolved", now.elapsed().as_secs_f64());
+    println!("ig {} resolved", now.elapsed().as_millis());
 
     // Awaits until `buffer_future` can be read from
     if let Some(Ok(())) = receiver.receive().await {
@@ -234,7 +245,7 @@ async fn execute_gpu_inner(
         // Since contents are got in bytes, this converts these bytes back to u32
         let result = bytemuck::cast_slice(&data).to_vec();
 
-        println!("ig {} cast", now.elapsed().as_secs_f64());
+        println!("ig {} cast", now.elapsed().as_millis());
 
         // With the current interface, we have to make sure all mapped views are
         // dropped before we unmap the buffer.
@@ -244,6 +255,8 @@ async fn execute_gpu_inner(
         //   delete myPointer;
         //   myPointer = NULL;
         // It effectively frees the memory
+
+        println!("ig {} dropped", now.elapsed().as_millis());
 
         // Returns data from buffer
         Some(result)

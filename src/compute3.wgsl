@@ -1,3 +1,5 @@
+// Based on https://prng.di.unimi.it/xoshiro256plusplus.c
+
 // performs a << k, where a is a 64 bit number represented by two u32's
 fn lshift(a0: u32, a1: u32, k: u32) -> array<u32, 2> {
     var b0: u32 = 0u;
@@ -106,16 +108,57 @@ fn next(s_in: array<u32, 8>) -> array<u32, 8> {
 	return s;
 }
 
-// fn rotl(a0: u32, a1: u32, k: u32) -> array<u32, 2> {
-//     var l = lshift(a0, a1, k);
-//     var r = rshift(a0, a1, 64u - k);
-//     var b0: u32 = l[0] | r[0];
-//     var b1: u32 = l[1] | r[1];
+fn jump(s_in: array<u32, 8>) -> array<u32, 8> {
+    var jump_arr: array<u32, 8> = array(1023216314, 403621587, 4039719212, 3584430694, 3762276778, 2841126424, 699491868, 967564357);
 
-//     return array<u32, 2>(b0, b1);
+    return jump_loop(s_in, jump_arr);
+}
 
-// //    (x << k) | (x >> (64 - k));
-// }
+fn long_jump(s_in: array<u32, 8>) -> array<u32, 8> {
+    var jump_arr: array<u32, 8> = array(4278045631, 1994480958, 475148211, 3305131588, 2236539457, 2003894377, 718005813, 957389744);
+
+    return jump_loop(s_in, jump_arr);
+}
+
+
+fn jump_loop(s_in: array<u32, 8>, jump_in: array<u32, 8>) -> array<u32, 8> {
+    var jump_arr = jump_in;
+    var s = s_in;
+    var s0 = 0u;
+	var s1 = 0u;
+	var s2 = 0u;
+	var s3 = 0u;
+    var s4 = 0u;
+    var s5 = 0u;
+	var s6 = 0u;
+	var s7 = 0u;
+	for(var i = 0u; i < 8u; i++) {
+        for (var b = 0u; b < 32u; b++) {
+            if ((jump_arr[i] & (1u << b)) != 0) {
+                s0 = s0 ^ s[0];
+                s1 = s1 ^ s[1];
+                s2 = s2 ^ s[2];
+                s3 = s3 ^ s[3];
+                s4 = s4 ^ s[4];
+                s5 = s5 ^ s[5];
+                s6 = s6 ^ s[6];
+                s7 = s7 ^ s[7];
+            }
+            s = next(s);
+        }
+    }
+
+	s[0] = s0;
+	s[1] = s1;
+	s[2] = s2;
+	s[3] = s3;
+    s[4] = s4;
+    s[5] = s5;
+    s[6] = s6;
+    s[7] = s7;
+
+    return s;
+}
 
 @group(0)
 @binding(0)
@@ -224,12 +267,20 @@ fn main_rotl_45(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 @compute
 @workgroup_size(256)
-fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    var i0 = global_id.x * 2u;
+fn main(@builtin(local_invocation_id) local_id: vec3<u32>, @builtin(workgroup_id) wgid : vec3<u32>) {
+    var i0 = local_id.x * 2u;
     var i1 = i0 + 1u;
     var state: array<u32, 8> = seed;
 
-    for (var i = 0u; i < global_id.x; i++) {
+    for (var i = 0u; i < wgid.x; i++) {
+        state = jump(state);
+    }
+
+    for (var i = 0u; i < wgid.y; i++) {
+        state = long_jump(state);
+    }
+
+    for (var i = 0u; i < local_id.x; i++) {
         state = next(state);
     }
     var n = next_result(state);
