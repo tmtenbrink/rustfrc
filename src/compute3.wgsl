@@ -267,24 +267,26 @@ fn main_rotl_45(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 @compute
 @workgroup_size(256)
-fn main(@builtin(local_invocation_id) local_id: vec3<u32>, @builtin(workgroup_id) wgid : vec3<u32>) {
-    var i0 = local_id.x * 2u;
-    var i1 = i0 + 1u;
+fn main(@builtin(local_invocation_id) local_id: vec3<u32>, @builtin(global_invocation_id) global_id: vec3<u32>, @builtin(workgroup_id) wgid : vec3<u32>) {
     var state: array<u32, 8> = seed;
-
-    for (var i = 0u; i < wgid.x; i++) {
-        state = jump(state);
-    }
-
+    
     for (var i = 0u; i < wgid.y; i++) {
         state = long_jump(state);
     }
 
     for (var i = 0u; i < local_id.x; i++) {
-        state = next(state);
+        state = jump(state);
     }
-    var n = next_result(state);
 
-    r[i0] = n[0];
-    r[i1] = n[1];
+    for (var i = 0u; i < 512u; i++) {
+        var i0 = (global_id.x*512 + i) * 2u;
+        var i1 = i0 + 1u;
+        
+        state = next(state);
+        var n = next_result(state);
+
+        r[i0] = n[0];
+        r[i1] = n[1];
+    }
+    
 }

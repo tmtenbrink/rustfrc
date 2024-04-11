@@ -46,7 +46,7 @@ pub async fn run() {
     let mut os_rng = OsRng::default();
     // let mut rng = thread_rng();
     // let mut thr_vec: Vec<u64> = Vec::with_capacity(4096*1000);
-    // for _i in 0..1000 {
+    // for _i in 0..1024 {
     //     let mut arr2 = [0u64; 4096];
     //     rng.fill(&mut arr2); 
     //     thr_vec.extend_from_slice(&arr2)
@@ -54,6 +54,9 @@ pub async fn run() {
 
     let seed: [u32; 8] = os_rng.gen();
     println!("{} genned", now.elapsed().as_millis());
+    // let nonzero_gens = thr_vec.iter().filter(|u| **u != 0).count();
+    // println!("nonzero genned: {} ", nonzero_gens);
+    println!("{} pre-exec", now.elapsed().as_millis());
     let gpu_add = execute_gpu("main", &seed).await.unwrap();
     println!("{} did exec", now.elapsed().as_millis());
     let gpu_add_64 = vec_u64_from_2_32(gpu_add.clone());
@@ -107,10 +110,11 @@ async fn execute_gpu(entry: &'static str, seed: &[u32; 8]) -> Option<Vec<u32>> {
     // After 6500+ it doesn't seem to work anymore
     // The total latency of starting and connecting the device is ~120+ ms
     // Then around 10 ms for the actual compu in the case of just 1 dispatched workgroup
-    execute_gpu_inner(entry, &device, &queue, seed, 1000).await
+    execute_gpu_inner(entry, &device, &queue, seed, 128).await
 }
 
 const WORKGROUP_SIZE: u32 = 256;
+const INVOKE_SIZE: u32 = 512;
 // The buffer limit is around 256 MB
 
 async fn execute_gpu_inner(
@@ -128,7 +132,7 @@ async fn execute_gpu_inner(
     let now = Instant::now();
     println!("ig {} mod", now.elapsed().as_millis());
 
-    let zero: Vec<u32> = vec![0; (dispatch_size*WORKGROUP_SIZE).try_into().unwrap()];
+    let zero: Vec<u32> = vec![0; (dispatch_size*WORKGROUP_SIZE*INVOKE_SIZE*2).try_into().unwrap()];
     //let v_big_zero = v_big.as_slice();
 
     // Gets the size in bytes of the buffer.
@@ -210,7 +214,7 @@ async fn execute_gpu_inner(
         cpass.set_pipeline(&compute_pipeline);
         cpass.set_bind_group(0, &bind_group, &[]);
         cpass.insert_debug_marker("compute seeds");
-        cpass.dispatch_workgroups(25, 40, 1); // Number of cells to run, the (x,y,z) size of item being processed
+        cpass.dispatch_workgroups(dispatch_size, 1, 1); // Number of cells to run, the (x,y,z) size of item being processed
     }
 
     println!("ig {} dispatched", now.elapsed().as_millis());

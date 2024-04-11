@@ -1,3 +1,21 @@
+Time to beat:
+
+110 ms for generating 4000x4000 (i.e. 16M) binomials (parallelized)
+- i.e. 160M binomials per second (~6 ns per binomial), where each has a different input parameter
+
+Currently we can:
+- generate 40M random u64's per second (16.8M in 415 ms)
+- However, nearly 120 ms is device setup, 120 ms is setting up buffers and 100 ms is casting it to the right type
+- So only 50 ms spent in the GPU doing compute
+
+vs. cpu thread rng: 200M u64's per second (non-parallelized)
+
+Take a look at AES hardware acceleration? https://docs.rs/aes/latest/aes/
+
+Take a look at cupy https://cupy.dev/
+
+https://dimitri.xyz/random-ints-from-random-bits/
+
 # rustfrc
 
 ![GitHub release](https://flat.badgen.net/github/release/tmtenbrink/rustfrc)
