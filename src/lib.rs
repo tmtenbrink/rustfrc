@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::io::Read;
 use std::time::Instant;
 use ndarray_rand::rand::{Rng, thread_rng};
 use ndarray_rand::rand::rngs::OsRng;
@@ -38,6 +39,7 @@ fn vec_u64_from_2_32 (u_vec: Vec<u32>) -> Vec<u64> {
 }
 
 
+
 pub async fn run() {
     let now = Instant::now();
     
@@ -57,21 +59,21 @@ pub async fn run() {
     // let nonzero_gens = thr_vec.iter().filter(|u| **u != 0).count();
     // println!("nonzero genned: {} ", nonzero_gens);
     println!("{} pre-exec", now.elapsed().as_millis());
-    let gpu_add = execute_gpu("main", &seed).await.unwrap();
+    let gpu_res = execute_gpu("main", &seed).await.unwrap();
     println!("{} did exec", now.elapsed().as_millis());
-    let gpu_add_64 = vec_u64_from_2_32(gpu_add.clone());
+    // let gpu_add_64 = vec_u64_from_2_32(gpu_add.clone());
     println!("{} to u64", now.elapsed().as_millis());
     //println!("Seed: [{:?}]", seed_to_64);
-    println!("New: [{:?}]", gpu_add_64.iter().take(30).collect::<Vec<&u64>>());
-    let nonzeros = gpu_add_64.iter().filter(|u| **u != 0).count();
+    // println!("New: [{:?}]", gpu_add_64.iter().take(30).collect::<Vec<&u64>>());
+    let nonzeros = gpu_res.iter().filter(|u| **u != 0).count();
     println!("Nonzeros: [{:?}]", nonzeros);
-    println!("Length: [{:?}]", gpu_add_64.len());
+    println!("Length: [{:?}]", gpu_res.len());
     println!("{} fin", now.elapsed().as_millis());
     //println!("New Rust: [{:?}]", seed_add);
     
 }
 
-async fn execute_gpu(entry: &'static str, seed: &[u32; 8]) -> Option<Vec<u32>> {
+async fn execute_gpu(entry: &'static str, seed: &[u32; 8]) -> Option<Vec<u8>> {
     let now = Instant::now();
     println!("eg {}", now.elapsed().as_millis());
     // Instantiates instance of WebGPU
@@ -123,7 +125,7 @@ async fn execute_gpu_inner(
     queue: &wgpu::Queue,
     seed: &[u32; 8],
     dispatch_size: u32
-) -> Option<Vec<u32>> {
+) -> Option<Vec<u8>> {
     // Loads the shader from WGSL
     let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
@@ -131,12 +133,11 @@ async fn execute_gpu_inner(
     });
     let now = Instant::now();
     println!("ig {} mod", now.elapsed().as_millis());
-
-    let zero: Vec<u32> = vec![0; (dispatch_size*WORKGROUP_SIZE*INVOKE_SIZE*2).try_into().unwrap()];
-    //let v_big_zero = v_big.as_slice();
+    
+    let len = (dispatch_size*WORKGROUP_SIZE*INVOKE_SIZE*2) as usize;
 
     // Gets the size in bytes of the buffer.
-    let slice_size = zero.len() * std::mem::size_of::<u32>();
+    let slice_size = len * std::mem::size_of::<u32>();
     let size = slice_size as wgpu::BufferAddress;
 
     // Instantiates buffer without data.
@@ -150,13 +151,17 @@ async fn execute_gpu_inner(
         mapped_at_creation: false,
     });
 
-    let storage_buffer_out = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    println!("ig {} cpu", now.elapsed().as_millis());
+
+    let storage_buffer_out = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Storage Buffer"),
-        contents: bytemuck::cast_slice(&zero),
+        size,
         usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_DST
             | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false
     });
+
+    println!("ig {} buf_storage", now.elapsed().as_millis());
 
     // Instantiates buffer with data (`numbers`).
     // Usage allowing the buffer to be:
@@ -166,8 +171,7 @@ async fn execute_gpu_inner(
     let storage_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Input Buffer"),
         contents: bytemuck::cast_slice(seed),
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_SRC,
+        usage: wgpu::BufferUsages::STORAGE,
     });
 
     println!("ig {} buf", now.elapsed().as_millis());
@@ -245,11 +249,14 @@ async fn execute_gpu_inner(
     // Awaits until `buffer_future` can be read from
     if let Some(Ok(())) = receiver.receive().await {
         // Gets contents of buffer
-        let data = buffer_slice.get_mapped_range();
-        // Since contents are got in bytes, this converts these bytes back to u32
-        let result = bytemuck::cast_slice(&data).to_vec();
+        let data = staging_buffer.slice(..).get_mapped_range();
 
-        println!("ig {} cast", now.elapsed().as_millis());
+        println!("ig {} slice", now.elapsed().as_millis());
+
+        // Since contents are got in bytes, this converts these bytes back to u32
+        let result = data.to_owned();
+
+        println!("ig {} own", now.elapsed().as_millis());
 
         // With the current interface, we have to make sure all mapped views are
         // dropped before we unmap the buffer.
@@ -285,7 +292,7 @@ mod tests {
         let seed_to_64 = vec_u64_from_2_32(Vec::from(seed.to_owned()));
         let seed_shift: Vec<u64> = seed_to_64.iter().map(|u| u << 5).collect();
         let gpu_shift = execute_gpu("main_lshift_5", &seed).await.unwrap();
-        let gpu_shift = vec_u64_from_2_32(gpu_shift);
+        let gpu_shift = vec_u64_from_2_32(bytemuck::cast_slice(gpu_shift.as_slice()).to_vec());
         seed_shift.iter().zip(gpu_shift.iter()).for_each(|(r, g)| {
             assert_eq!(r, g)
         });
@@ -298,7 +305,7 @@ mod tests {
         let seed_to_64 = vec_u64_from_2_32(Vec::from(seed.to_owned()));
         let seed_shift: Vec<u64> = seed_to_64.iter().map(|u| u << 33).collect();
         let gpu_shift = execute_gpu("main_lshift_33", &seed).await.unwrap();
-        let gpu_shift = vec_u64_from_2_32(gpu_shift);
+        let gpu_shift = vec_u64_from_2_32(bytemuck::cast_slice(gpu_shift.as_slice()).to_vec());
         seed_shift.iter().zip(gpu_shift.iter()).for_each(|(r, g)| {
             assert_eq!(r, g)
         });
@@ -311,7 +318,7 @@ mod tests {
         let seed_to_64 = vec_u64_from_2_32(Vec::from(seed.to_owned()));
         let seed_shift: Vec<u64> = seed_to_64.iter().map(|u| u >> 7).collect();
         let gpu_shift = execute_gpu("main_rshift_7", &seed).await.unwrap();
-        let gpu_shift = vec_u64_from_2_32(gpu_shift);
+        let gpu_shift = vec_u64_from_2_32(bytemuck::cast_slice(gpu_shift.as_slice()).to_vec());
         seed_shift.iter().zip(gpu_shift.iter()).for_each(|(r, g)| {
             assert_eq!(r, g)
         });
@@ -324,7 +331,7 @@ mod tests {
         let seed_to_64 = vec_u64_from_2_32(Vec::from(seed.to_owned()));
         let seed_shift: Vec<u64> = seed_to_64.iter().map(|u| u >> 35).collect();
         let gpu_shift = execute_gpu("main_rshift_35", &seed).await.unwrap();
-        let gpu_shift = vec_u64_from_2_32(gpu_shift);
+        let gpu_shift = vec_u64_from_2_32(bytemuck::cast_slice(gpu_shift.as_slice()).to_vec());
         seed_shift.iter().zip(gpu_shift.iter()).for_each(|(r, g)| {
             assert_eq!(r, g)
         });
@@ -338,7 +345,7 @@ mod tests {
         let seed = vec_u32_from_64(seed_to_64.to_owned());
         let seed_add: Vec<u64> = seed_to_64.chunks_exact(2).map(|u_arr| u_arr[0] + u_arr[1]).collect();
         let gpu_add = execute_gpu("main_add", &seed.clone().try_into().unwrap()).await.unwrap();
-        let gpu_add_64 = vec_u64_from_2_32(gpu_add.clone());
+        let gpu_add_64 = vec_u64_from_2_32(bytemuck::cast_slice(gpu_add.as_slice()).to_vec());
         seed_add.iter().zip(gpu_add_64.iter()).for_each(|(r, g)| {
             assert_eq!(r, g)
         });
@@ -352,7 +359,7 @@ mod tests {
         let seed = vec_u32_from_64(seed_to_64.to_owned());
         let seed_rotl: Vec<u64> = seed_to_64.iter().map(|u| rotl(*u, 23u64)).collect();
         let gpu_rotl = execute_gpu("main_rotl_23", &seed.clone().try_into().unwrap()).await.unwrap();
-        let gpu_rotl_64 = vec_u64_from_2_32(gpu_rotl.clone());
+        let gpu_rotl_64 = vec_u64_from_2_32(bytemuck::cast_slice(gpu_rotl.as_slice()).to_vec());
         seed_rotl.iter().zip(gpu_rotl_64.iter()).for_each(|(r, g)| {
             assert_eq!(r, g)
         });
@@ -366,7 +373,7 @@ mod tests {
         let seed = vec_u32_from_64(seed_to_64.to_owned());
         let seed_rotl: Vec<u64> = seed_to_64.iter().map(|u| rotl(*u, 45u64)).collect();
         let gpu_rotl = execute_gpu("main_rotl_45", &seed.clone().try_into().unwrap()).await.unwrap();
-        let gpu_rotl_64 = vec_u64_from_2_32(gpu_rotl.clone());
+        let gpu_rotl_64 = vec_u64_from_2_32(bytemuck::cast_slice(gpu_add.as_slice()).to_vec());
         seed_rotl.iter().zip(gpu_rotl_64.iter()).for_each(|(r, g)| {
             assert_eq!(r, g)
         });
