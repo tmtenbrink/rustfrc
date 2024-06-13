@@ -24,6 +24,3 @@ criterion = "0.3"
 [[bench]]
 name = "rustfrc_bench"
 harness = false
-
-[package.metadata.maturin]
-python-source = "python"

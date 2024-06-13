@@ -42,7 +42,7 @@ However, for an optimal Python experience, use [poetry](https://github.com/pytho
 
 ### From source (using maturin)
 
-rustfrc uses [poetry](https://github.com/python-poetry/poetry) as its Python dependency manager. For best results, create a `poetry` virtualenv (be sure to install virtualenv as a systems package) with the `pyproject.toml` and run `poetry update` to install the required packages. I recommend installing [maturin](https://pypi.org/project/maturin/) as a global tool (e.g. with `cargo binstall`).
+rustfrc uses [poetry](https://github.com/python-poetry/poetry) as its Python dependency manager. For best results, create a `poetry` virtualenv (be sure to install virtualenv as a systems package) with the `pyproject.toml` and run `poetry install` to install the required packages. I recommend installing [maturin](https://pypi.org/project/maturin/) as a global tool (e.g. with `cargo binstall`).
 
 Build a wheel file like this (if using poetry, append `poetry run` before the command) from the project directory:
 
@@ -59,3 +59,24 @@ Take a look at [PyO3](https://github.com/PyO3/pyo3) for other installation optio
 #### Manylinux
 
 If you want to build .whl files that are compatible with a wide range of Linux distributions and can be uploaded to PyPI, take a look at the GitHub Actions files and [pyo3/maturin-action](https://github.com/PyO3/maturin-action).
+
+## Development
+
+### Poetry
+
+First, install Poetry. Since we aim for compatibility with Python 3.8+, it's recommended to install Python 3.8 and create a virtual environment with:
+
+`poetry env use <path to Python 3.8 executable>`
+
+Then, do `poetry shell` to activate the virtual environment.
+
+Next, run `poetry install` to install the (development) dependencies.
+
+Finally, build the Rust project using `maturin develop` (it's recommended to install `maturin` globally using `cargo binstall maturin` or `pipx install maturin`). 
+
+Run the tests using `pytest`.
+
+Note that type information is not available for the Rust functions, you will have to look at the Rust source code. Maturin builds a package structures as follows:
+- root `rustfrc` package
+    - `_internal`: this includes `binom_split_py`, etc.
+    - `split`: this is the Python source code in `python/rustfrc/split.py`

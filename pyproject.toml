@@ -28,6 +28,9 @@ name = "rustfrc"
 version = "1.1.5"
 description = "Fast utility functions useful for Fourier Ring/Shell Correlation: binomial splitting of arrays."
 authors = ["Tip ten Brink <T.M.tenBrink@student.tudelft.nl>"]
+packages = [
+    { include = "rustfrc", from = "python" },
+]
 
 [tool.poetry.dependencies]
 python = ">= 3.8, <3.13"

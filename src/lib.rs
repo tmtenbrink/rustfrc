@@ -44,7 +44,6 @@ fn binom_split_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, i32>) -> PyRe
 /// Takes an array (np.ndarray with dtype complex64) and takes the absolute value and then squares
 /// it, element-wise.
 #[pyfunction]
-#[pyo3(text_signature = "a, /")]
 fn sqr_abs32_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, Complex32>) -> Bound<'py, PyArrayDyn<f32>> {
     let a = a.to_owned_array();
 
@@ -54,7 +53,6 @@ fn sqr_abs32_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, Complex32>) -> 
 /// Takes an array (np.ndarray with dtype complex128) and takes the absolute value and then squares
 /// it, element-wise.
 #[pyfunction]
-#[pyo3(text_signature = "a, /")]
 fn sqr_abs64_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, Complex64>) -> Bound<'py, PyArrayDyn<f64>> {
     let a = a.to_owned_array();
 
@@ -65,7 +63,6 @@ fn sqr_abs64_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, Complex64>) -> 
 /// parameter lambda for each element. Takes a lambda parameter (positive) and a shape tuple of
 /// non-negative ints.
 #[pyfunction]
-#[pyo3(text_signature = "a, /")]
 fn pois_gen_py(py: Python<'_>, shape: PyObject, lambda: f64 ) -> PyResult<Bound<'_, PyArrayDyn<f64>>> {
     let shape_vec: Vec<usize> = shape.extract(py)?;
     let shape = shape_vec.as_slice();
