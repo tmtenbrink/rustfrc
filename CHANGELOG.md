@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0 2026-10-31
+
+* **Drop Python 3.8, 3.9 support, add Python 3.13, 3.14 support**: rustfrc now requires Python 3.10+ and NumPy 1.21.3+. NumPy 2 is supported.
+
+### Internal
+
+* Update PyO3 and rust-numpy to 0.30, ndarray to 0.17, rand to 0.10 and use rand directly instead of through ndarray-rand
+* Use Rust edition 2024
+* Replace Poetry with uv for development, update GitHub Actions and remove the unused Dockerfile
+
 ## 1.1.5 2024-04-03
 
 * **Reintroduce Python 3.8, Numpy 1.18+ support**: Turned out it was unnecessary to drop all older versions.

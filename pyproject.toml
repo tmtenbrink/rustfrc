@@ -1,13 +1,12 @@
 [project]
 name = "rustfrc"
-version = "1.1.5"
+version = "1.2.0"
 description = "Fast utility functions useful for Fourier Ring/Shell Correlation: binom_split, pois_gen, square_abs."
 readme = "README.md"
-requires-python = ">=3.8, <3.13"
-license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+license = "Apache-2.0"
 authors = [
-  {email = "T.M.tenBrink@student.tudelft.nl"},
-  {name = "Tip ten Brink"}
+  {name = "Tip ten Brink", email = "T.M.tenBrink@student.tudelft.nl"},
 ]
 classifiers = [
     "Intended Audience :: Science/Research",
@@ -16,35 +15,24 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Image Processing"
 ]
 dependencies = [
-  "numpy >= 1.18; python_version < '3.12'",
-  "numpy >= 1.26; python_version >= '3.12'"
+  "numpy >= 1.21.3",
 ]
 
 [project.urls]
 Source = "https://github.com/tmtenbrink/rustfrc"
 
-[tool.poetry]
-name = "rustfrc"
-version = "1.1.5"
-description = "Fast utility functions useful for Fourier Ring/Shell Correlation: binomial splitting of arrays."
-authors = ["Tip ten Brink <T.M.tenBrink@student.tudelft.nl>"]
-packages = [
-    { include = "rustfrc", from = "python" },
+[dependency-groups]
+dev = [
+  "pytest >= 8.3.5",
 ]
-
-[tool.poetry.dependencies]
-python = ">= 3.8, <3.13"
-numpy = [
-    {version = "^1.18", python = "<3.12"},
-    {version = "^1.26", python = ">=3.12"}
-]
-
-[tool.poetry.dev-dependencies]
-pytest = "^8.1.1"
 
 [tool.maturin]
 python-source = "python"
 
 [build-system]
-requires = ["maturin>=1.0,<2.0"]
-build-backend ="maturin"
+requires = ["maturin>=1.16,<2.0"]
+build-backend = "maturin"
+
+[tool.uv]
+# Rebuild the extension module when the Rust code changes
+cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { file = "src/**/*.rs" }]
