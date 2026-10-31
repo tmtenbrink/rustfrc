@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 authors = [
-  {name = "Tip ten Brink", email = "T.M.tenBrink@student.tudelft.nl"},
+  {name = "Tip ten Brink", email = "tip@tenbrinkmeijs.com"},
 ]
 classifiers = [
     "Intended Audience :: Science/Research",
