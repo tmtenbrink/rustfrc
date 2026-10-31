@@ -3,7 +3,7 @@ name = "rustfrc"
 version = "1.2.0"
 description = "Fast utility functions useful for Fourier Ring/Shell Correlation: binom_split, pois_gen, square_abs."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [
@@ -16,7 +16,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Image Processing"
 ]
 dependencies = [
-  "numpy >= 1.21.3",
+  "numpy >= 1.19.3",
 ]
 
 [project.urls]
@@ -24,7 +24,8 @@ Source = "https://github.com/tmtenbrink/rustfrc"
 
 [dependency-groups]
 dev = [
-  "pytest >= 9.0.3",
+  "pytest >= 9.0.3; python_version >= '3.10'",
+  "pytest >= 8.4.2; python_version < '3.10'",
 ]
 
 [tool.maturin]

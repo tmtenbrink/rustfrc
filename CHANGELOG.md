@@ -2,7 +2,7 @@
 
 ## 1.2.0 2026-10-31
 
-* **Drop Python 3.8, 3.9 support, add Python 3.13-3.15 support**: rustfrc now requires Python 3.10+ and NumPy 1.21.3+. NumPy 2 is supported.
+* **Drop Python 3.8 support, add Python 3.13-3.15 support**: rustfrc now requires Python 3.9+ and NumPy 1.19.3+. Python 3.8 is dropped because PyO3 0.30 requires Python 3.9+. NumPy 2 is supported.
 
 ### Internal
 

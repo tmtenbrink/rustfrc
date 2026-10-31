@@ -17,8 +17,8 @@ Furthermore, there are also (since version 1.1) `sqr_abs(a: ndarray) -> ndarray`
 
 ## Requirements
 
-* Python 3.10-3.15
-* NumPy 1.21.3+ (newer Python versions need newer NumPy, e.g. Python 3.13 requires NumPy 2.1+)
+* Python 3.9-3.15
+* NumPy 1.19.3+ (newer Python versions need newer NumPy, e.g. Python 3.13 requires NumPy 2.1+)
 
 ## Performance
 
@@ -50,7 +50,7 @@ uvx maturin build --release
 
 If you want to choose which versions of Python to build for, you can write e.g. `uvx maturin build --release -i python3.12 python3.13`. Here, for example '`python3.12`' should be an available Python command installed on your computer.
 
-This generates `.whl` files in `/target/wheels`. Then, create a Python environment of your choosing (with `numpy>=1.21.3` and `python>=3.10`), drop the `.whl` file in it and run `pip install <.whl filename>`, for example: `pip install rustfrc-0.1.0-cp39-none-win_amd64.whl`. Then, use `import rustfrc` in your Python script to be able to use the Rust functions. This should be generally valid for all platforms. The only real requirement is the availability of a Rust toolchain and Python for your platform.
+This generates `.whl` files in `/target/wheels`. Then, create a Python environment of your choosing (with `numpy>=1.19.3` and `python>=3.9`), drop the `.whl` file in it and run `pip install <.whl filename>`, for example: `pip install rustfrc-0.1.0-cp39-none-win_amd64.whl`. Then, use `import rustfrc` in your Python script to be able to use the Rust functions. This should be generally valid for all platforms. The only real requirement is the availability of a Rust toolchain and Python for your platform.
 
 Take a look at [PyO3](https://github.com/PyO3/pyo3) for other installation options as the only true requirement for building is using a tool that understands PyO3 bindings, as those are used in the Rust code.
 
@@ -62,7 +62,7 @@ If you want to build .whl files that are compatible with a wide range of Linux d
 
 ### uv
 
-First, install [uv](https://docs.astral.sh/uv/getting-started/installation/) and a Rust toolchain. Then run `uv sync` in the project directory. This creates a virtual environment in `.venv`, installs the (development) dependencies and builds the Rust extension with maturin. To develop against the oldest supported Python, pass it explicitly, e.g. `uv sync -p 3.10`.
+First, install [uv](https://docs.astral.sh/uv/getting-started/installation/) and a Rust toolchain. Then run `uv sync` in the project directory. This creates a virtual environment in `.venv`, installs the (development) dependencies and builds the Rust extension with maturin. To develop against the oldest supported Python, pass it explicitly, e.g. `uv sync -p 3.9`.
 
 After changing the Rust code, run `uv sync` again to rebuild the extension.
 
