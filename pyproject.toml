@@ -5,6 +5,7 @@ description = "Fast utility functions useful for Fourier Ring/Shell Correlation:
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [
   {name = "Tip ten Brink", email = "tip@tenbrinkmeijs.com"},
 ]
