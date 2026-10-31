@@ -17,7 +17,7 @@ Furthermore, there are also (since version 1.1) `sqr_abs(a: ndarray) -> ndarray`
 
 ## Requirements
 
-* Python 3.10-3.14
+* Python 3.10-3.15
 * NumPy 1.21.3+ (newer Python versions need newer NumPy, e.g. Python 3.13 requires NumPy 2.1+)
 
 ## Performance
