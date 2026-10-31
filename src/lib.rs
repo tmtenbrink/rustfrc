@@ -5,8 +5,7 @@ use std::marker::{Send, Sync};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use ndarray::{Array, ArrayD, ArrayView, Dimension};
-use ndarray_rand::rand::prelude::{Distribution, thread_rng};
-use ndarray_rand::rand_distr::{Binomial, Poisson, PoissonError};
+use rand_distr::{Binomial, Distribution, Poisson, PoissonError};
 use num_complex::{Complex, Complex32, Complex64};
 use num_traits::{Float, Zero};
 use num_traits::real::Real;
@@ -14,11 +13,9 @@ use numpy::{IntoPyArray, PyArrayDyn, PyReadonlyArrayDyn, PyArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use pyo3::PyObject;
-
 #[pymodule]
 fn rustfrc(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let internal = PyModule::new_bound(m.py(), "_internal")?;
+    let internal = PyModule::new(m.py(), "_internal")?;
     internal.add_function(wrap_pyfunction!(binom_split_py, &internal)?)?;
     internal.add_function(wrap_pyfunction!(sqr_abs32_py, &internal)?)?;
     internal.add_function(wrap_pyfunction!(sqr_abs64_py, &internal)?)?;
@@ -38,7 +35,7 @@ fn binom_split_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, i32>) -> PyRe
 
     binom_split(a)
              .map_err(|e| PyValueError::new_err(format!("{}", e)))
-             .map(|a| a.into_pyarray_bound(py))
+             .map(|a| a.into_pyarray(py))
 }
 
 /// Takes an array (np.ndarray with dtype complex64) and takes the absolute value and then squares
@@ -47,7 +44,7 @@ fn binom_split_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, i32>) -> PyRe
 fn sqr_abs32_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, Complex32>) -> Bound<'py, PyArrayDyn<f32>> {
     let a = a.to_owned_array();
 
-    sqr_abs(a).into_pyarray_bound(py)
+    sqr_abs(a).into_pyarray(py)
 }
 
 /// Takes an array (np.ndarray with dtype complex128) and takes the absolute value and then squares
@@ -56,20 +53,17 @@ fn sqr_abs32_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, Complex32>) -> 
 fn sqr_abs64_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, Complex64>) -> Bound<'py, PyArrayDyn<f64>> {
     let a = a.to_owned_array();
 
-    sqr_abs(a).into_pyarray_bound(py)
+    sqr_abs(a).into_pyarray(py)
 }
 
 /// Generates an array (np.ndarray with dtype float64) by sampling a Poisson distribution with
 /// parameter lambda for each element. Takes a lambda parameter (positive) and a shape tuple of
 /// non-negative ints.
 #[pyfunction]
-fn pois_gen_py(py: Python<'_>, shape: PyObject, lambda: f64 ) -> PyResult<Bound<'_, PyArrayDyn<f64>>> {
-    let shape_vec: Vec<usize> = shape.extract(py)?;
-    let shape = shape_vec.as_slice();
-
-    pois_gen(shape, lambda)
+fn pois_gen_py(py: Python<'_>, shape: Vec<usize>, lambda: f64) -> PyResult<Bound<'_, PyArrayDyn<f64>>> {
+    pois_gen(&shape, lambda)
         .map_err(|e| PyValueError::new_err(format!("{}", e)))
-        .map(|a| a.into_pyarray_bound(py))
+        .map(|a| a.into_pyarray(py))
 }
 
 #[derive(Debug)]
@@ -99,7 +93,7 @@ pub fn binom_split<D: Dimension>(mut a: Array<i32, D>) -> Result<Array<i32, D>, 
         // Once it is set to true, it will stay true, when exactly that happens does not matter
         if !to_unsized_failed.load(Ordering::Relaxed) {
             // We use thread rng, which is fast
-            let mut rng = thread_rng();
+            let mut rng = rand::rng();
             // We try to convert i32 to u64 (which is required for Binomial)
             // If it fails, we indicate a failure has occurred
             // Unfortunately it is not possible to escape from the loop immediately
@@ -141,7 +135,7 @@ pub fn pois_gen(shape: &[usize], lambda: f64) -> Result<ArrayD<f64>, PoissonErro
 
     let mut a = ArrayD::<f64>::from_elem(shape, lambda);
     a.par_mapv_inplace(|l| {
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
 
         Poisson::new(l).unwrap().sample(&mut rng)
     });

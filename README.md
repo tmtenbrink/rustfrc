@@ -17,8 +17,8 @@ Furthermore, there are also (since version 1.1) `sqr_abs(a: ndarray) -> ndarray`
 
 ## Requirements
 
-* Python 3.8-3.12
-* NumPy 1.18+ (exact version might depend on Python version, e.g. Python 3.12 requires NumPy 1.26)
+* Python 3.9-3.15
+* NumPy 1.19.3+ (newer Python versions need newer NumPy, e.g. Python 3.13 requires NumPy 2.1+)
 
 ## Performance
 
@@ -38,21 +38,19 @@ You can most easily install [rustfrc](https://pypi.org/project/rustfrc/) as foll
 pip install rustfrc
 ```
 
-However, for an optimal Python experience, use [poetry](https://github.com/python-poetry/poetry) and install it using `poetry add rustfrc`.
+In a project managed by [uv](https://github.com/astral-sh/uv), add it with `uv add rustfrc`.
 
 ### From source (using maturin)
 
-rustfrc uses [poetry](https://github.com/python-poetry/poetry) as its Python dependency manager. For best results, create a `poetry` virtualenv (be sure to install virtualenv as a systems package) with the `pyproject.toml` and run `poetry install` to install the required packages. I recommend installing [maturin](https://pypi.org/project/maturin/) as a global tool (e.g. with `cargo binstall`).
-
-Build a wheel file like this (if using poetry, append `poetry run` before the command) from the project directory:
+rustfrc uses [uv](https://github.com/astral-sh/uv) as its Python project manager and [maturin](https://pypi.org/project/maturin/) as its build backend. Build a wheel file from the project directory like this:
 
 ```shell
-maturin build --release
+uvx maturin build --release
 ```
 
-If you want to choose which versions of Python to build for, you can write e.g. `maturin build --release -i python3.9 python3.8 python3.7`. Here, for example '`python3.7`' should be an available Python command installed on your computer.
+If you want to choose which versions of Python to build for, you can write e.g. `uvx maturin build --release -i python3.12 python3.13`. Here, for example '`python3.12`' should be an available Python command installed on your computer.
 
-This generates `.whl` files in `/target/wheels`. Then, create a Python environment of your choosing (with `numpy ^1.18` and `python ^3.7`), drop the `.whl` file in it and run `pip install <.whl filename>`, for example: `pip install rustfrc-0.1.0-cp39-none-win_amd64.whl`. Then, use `import rustfrc` in your Python script to be able to use the Rust functions. This should be generally valid for all platforms. The only real requirement is the availability of a Rust toolchain and Python for your platform.
+This generates `.whl` files in `/target/wheels`. Then, create a Python environment of your choosing (with `numpy>=1.19.3` and `python>=3.9`), drop the `.whl` file in it and run `pip install <.whl filename>`, for example: `pip install rustfrc-0.1.0-cp39-none-win_amd64.whl`. Then, use `import rustfrc` in your Python script to be able to use the Rust functions. This should be generally valid for all platforms. The only real requirement is the availability of a Rust toolchain and Python for your platform.
 
 Take a look at [PyO3](https://github.com/PyO3/pyo3) for other installation options as the only true requirement for building is using a tool that understands PyO3 bindings, as those are used in the Rust code.
 
@@ -62,19 +60,13 @@ If you want to build .whl files that are compatible with a wide range of Linux d
 
 ## Development
 
-### Poetry
+### uv
 
-First, install Poetry. Since we aim for compatibility with Python 3.8+, it's recommended to install Python 3.8 and create a virtual environment with:
+First, install [uv](https://docs.astral.sh/uv/getting-started/installation/) and a Rust toolchain. Then run `uv sync` in the project directory. This creates a virtual environment in `.venv`, installs the (development) dependencies and builds the Rust extension with maturin. To develop against the oldest supported Python, pass it explicitly, e.g. `uv sync -p 3.9`.
 
-`poetry env use <path to Python 3.8 executable>`
+After changing the Rust code, run `uv sync` again to rebuild the extension.
 
-Then, do `poetry shell` to activate the virtual environment.
-
-Next, run `poetry install` to install the (development) dependencies.
-
-Finally, build the Rust project using `maturin develop` (it's recommended to install `maturin` globally using `cargo binstall maturin` or `pipx install maturin`). 
-
-Run the tests using `pytest`.
+Run the Rust tests using `cargo test` and the Python tests using `uv run pytest`.
 
 Note that type information is not available for the Rust functions, you will have to look at the Rust source code. Maturin builds a package structures as follows:
 - root `rustfrc` package

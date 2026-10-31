@@ -1,8 +1,9 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BatchSize};
+use std::hint::black_box;
+use criterion::{criterion_group, criterion_main, Criterion, BatchSize};
 use rustfrc::{binom_split, pois_gen, sqr_abs, to_i32};
 use num_complex::Complex;
-use ndarray_rand::rand::prelude::{Distribution, thread_rng};
-use ndarray_rand::rand_distr::Poisson;
+use rand_distr::Distribution;
+use rand_distr::Poisson;
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("sample-10");
@@ -13,7 +14,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     let arr = pois_gen(&size, 200f64).unwrap();
 
     let arr_complex = arr.map(|e| {
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
         let a = Poisson::new(*e).unwrap().sample(&mut rng);
         Complex::new(*e, a.to_owned())
     });
