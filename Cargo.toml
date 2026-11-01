@@ -8,22 +8,25 @@ name = "rustfrc"
 crate-type = ["cdylib", "lib"]
 
 [dependencies]
-numpy = "0.30"
-ndarray = { version = "0.17", features = ["rayon"] }
 rand = "0.10"
-rand_distr = "0.6"
-num-complex = "0.4.6"
-num-traits = "0.2.19"
+rand_xoshiro = "0.8"
+rayon = "1.12.0"
+rustfft = "6"
 
 [dependencies.pyo3]
 version = "0.30.1"
-# One wheel per platform for CPython 3.9 and later, and one for
-# free-threaded CPython 3.15t and later; see .github/workflows/wheels.yml.
-features = ["extension-module", "abi3-py39", "abi3t-py315"]
+# One wheel per platform for CPython 3.11 and later, the first stable ABI with the buffer
+# protocol, and one for free-threaded CPython 3.15t and later; see .github/workflows/wheels.yml.
+features = ["extension-module", "abi3-py311", "abi3t-py315"]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# madvise, for huge pages under the FRC spectrum.
+libc = "0.2.191"
 
 [dev-dependencies]
 criterion = "0.8"
+rand_distr = "0.6"
 
 [[bench]]
-name = "rustfrc_bench"
+name = "frc"
 harness = false

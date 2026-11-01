@@ -3,12 +3,13 @@
 # releases.
 #
 # The pyo3 features in Cargo.toml give two wheels per platform: `abi3` for
-# CPython 3.9 and later, and `abi3t` for free-threaded CPython 3.15t and
+# CPython 3.11 and later, and `abi3t` for free-threaded CPython 3.15t and
 # later. maturin builds one kind per run, chosen by the interpreter it builds
 # against.
 #
 # The jobs that build install only pinned tools. The tests install the newest
-# pytest and NumPy, so they run in their own jobs, on the uploaded files.
+# pytest and NumPy, which only the tests use, so they run in their own jobs, on
+# the uploaded files.
 name: wheels
 
 on:
@@ -135,11 +136,22 @@ jobs:
           version: 0.13.6
       - name: Test the wheels
         run: |
-          run_tests() { uv run --isolated --no-project -p "$1" --with "$2" --with pytest pytest -q tests; }
+          run_tests() { uv run --isolated --no-project -p "$1" --with "$2" --with pytest --with numpy pytest -q tests; }
           ls dist
-          run_tests 3.9 dist/*-cp39-abi3-*.whl
-          run_tests 3.15 dist/*-cp39-abi3-*.whl
+          run_tests 3.11 dist/*-cp311-abi3-*.whl
+          run_tests 3.15 dist/*-cp311-abi3-*.whl
           run_tests 3.15t dist/*-abi3.abi3t-*.whl
+      # rustfrc has no dependencies: it must work without NumPy installed.
+      - name: Use the wheel without NumPy
+        run: |
+          uv run --isolated --no-project -p 3.15 --with dist/*-cp311-abi3-*.whl python -c '
+          import array, importlib.util, rustfrc
+          assert importlib.util.find_spec("numpy") is None
+          k = rustfrc.binom_split(array.array("i", [5] * 64), seed=1)
+          assert k.format == "i" and all(0 <= v <= 5 for v in k)
+          img = memoryview(array.array("q", [7] * 256)).cast("B").cast("q", [16, 16])
+          assert len(rustfrc.one_frc(img, seed=2)) == 8
+          '
 
   # Builds the extension from the sdist alone, as pip does on a platform
   # without a wheel.
@@ -161,4 +173,4 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: 0.13.6
-      - run: uv run --isolated --no-project -p 3.15 --with dist/*.tar.gz --with pytest pytest -q tests
+      - run: uv run --isolated --no-project -p 3.15 --with dist/*.tar.gz --with pytest --with numpy pytest -q tests

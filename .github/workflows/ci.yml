@@ -12,9 +12,9 @@ jobs:
   test-linux:
     strategy:
       matrix:
-        # The oldest Python, with the oldest NumPy, and the newest. wheels.yml
-        # tests the wheels that a release publishes.
-        py-version: ['3.9', '3.15']
+        # The oldest Python and the newest. wheels.yml tests the wheels that a
+        # release publishes.
+        py-version: ['3.11', '3.15']
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,10 +28,6 @@ jobs:
     # uv builds the extension module with maturin as part of installing the project
     - name: uv sync
       run: uv sync --locked
-
-    - name: Test lowest NumPy
-      if: ${{ matrix.py-version == '3.9' }}
-      run: uv pip install numpy==1.19.3
 
     - name: cargo test
       run: cargo test --locked

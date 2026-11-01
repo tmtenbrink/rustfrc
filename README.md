@@ -3,32 +3,34 @@
 ![GitHub release](https://flat.badgen.net/github/release/tiptenbrink/rustfrc)
 ![License](https://flat.badgen.net/github/license/tiptenbrink/rustfrc)
 
-rustfrc is a Python package with some fast Rust functions that are useful when performing Fourier Ring Correlation (FRC) computations for resolution determination in microscopy (specifically optical nanoscopy). It was originally developed for use in a Bachelor end project for the TU Delft in the period 2021-2022. See the Python package [`frc`](https://github.com/tiptenbrink/frc) for examples of its usage. The `test_split.py` file in the `tests` directory also holds some examples.
+rustfrc is the compiled core of [`frc`](https://github.com/tiptenbrink/frc), a Python library for Fourier Ring Correlation (FRC) and resolution determination in microscopy. It was first developed for a Bachelor end project at TU Delft in 2021-2022. rustfrc has no dependencies: it takes any array that supports the buffer protocol, such as a NumPy array, an `array.array` or a `memoryview`, and returns a `memoryview`, which `numpy.asarray` wraps without copying it. For an API that takes and returns NumPy arrays, use `frc`.
 
-Since rustfrc contains compiled (Rust) extensions and is not pure Python, it is not available for all platforms, but only for those with available compiled wheels or a Rust toolchain and `maturin` support (see below). They are available for Windows (x86_64), macOS (universal2, which runs on both Apple Silicon and Intel) and Linux (x86_64, glibc 2.28 and later), for CPython 3.9 and later and for free-threaded CPython 3.15t and later. However, since Rust and Python are supported on many platforms, it is not difficult to compile for other platforms (see below).
+rustfrc has wheels for Windows (x86_64), macOS (universal2, which runs on both Apple Silicon and Intel) and Linux (x86_64, glibc 2.28 and later). One wheel per platform covers CPython 3.11 and later, through the stable ABI, and one free-threaded CPython 3.15t and later, so a new Python version needs no new release. On other platforms, pip builds rustfrc from the sdist, which needs a Rust toolchain.
 
 ## Features
 
-rustfrc has only a few features. The primary one is `binom_split(x: ndarray) -> ndarray` which samples binomial _(n, 0.5)_ with n as the array element value. The operation is fully parallelized and somewhere between 3-10x faster than sampling using NumPy.
+- `binom_split(a, seed=None)` replaces every count n of an array of non-negative integers with a sample k of binomial(n, 0.5), in an int32 array of the same shape. It counts the ones among n random bits, from 16 xoshiro256++ generators at once, with AVX-512 or AVX2 when the CPU has them. A Poisson-distributed count with mean λ becomes one with mean λ / 2, and so does n - k, independently of k.
+- `one_frc(img, seed=None)` computes the FRC curve of a square image of counts from that one image: it splits every count with `binom_split`, Fourier transforms both halves, and correlates them over rings of equal distance from the origin. Ring r holds the frequencies f with r <= |f| < r + 1, as DIPlib's `RadialSum` bins them. The curve is a float64 array of length n // 2.
+- `two_frc(img1, img2)` computes the FRC curve of two square images of one size.
+- `ring_counts(n)` gives the number of frequencies in each ring of an n x n spectrum, as a uint64 array.
+- `FrcPlan(n)` holds the FFT plans and the buffers for n x n images. `one_frc` and `two_frc` make one per call; for several images of one size, make one plan and use its `one_frc` and `two_frc` methods.
 
-Furthermore, there are also (since version 1.1) `sqr_abs(a: ndarray) -> ndarray` and `pois_gen(lam: float, shape: tuple[int, ...]) -> ndarray`.
+With a seed, the same input gives the same output on every CPU. Without one, every call draws a fresh seed from the operating system.
 
-`sqr_abs` computes the element-wise norm and square of a complex array, while `pois_gen` generates an array of the specified size using the Poisson distribution and a single parameter λ.
+```python
+import numpy as np
+import rustfrc
 
-## Requirements
-
-* Python 3.9 or later, or free-threaded Python 3.15t or later
-* NumPy 1.19.3+ (newer Python versions need newer NumPy, e.g. Python 3.13 requires NumPy 2.1+)
+img = np.random.default_rng(0).poisson(100, (1024, 1024))
+curve = np.asarray(rustfrc.one_frc(img, seed=1))
+```
 
 ## Performance
 
-On an i7-8750H, a decently high performance 6-core chip from 2017, I measured the following speeds:
+On 8 threads of an AMD EPYC 9V45 (Zen 5, AVX-512), with mean counts of 100 to 200:
 
-- `binom_split`: ~210 ms on a 4000x4000 array, with each element Poisson-generated with a mean of 200
-- `pois_gen`: ~420 ms to generate a 4000x4000 array with mean 200
-- `sqr_abs`: ~40 ms on a 4000x4000 array, where each element is a complex number with both the real and imaginary parts having a mean of 200
-
-Take this with a grain of salt, but it should provide a decent order of magnitude for larger images. 
+- `binom_split`: its sampler takes ~1 ms on a 2000x2000 array, against ~49 ms for rustfrc 1.2.
+- `FrcPlan.one_frc`: ~18 ms on a 4096x4096 image with a reused plan, ~30 ms with `one_frc`, which makes the plan, against ~1000 ms for `frc.one_frc` 0.1 (rustfrc 1.2's split with DIPlib's FFT and `RadialSum`).
 
 ## Installation
 
@@ -50,9 +52,9 @@ rustfrc uses [uv](https://github.com/astral-sh/uv) as its Python project manager
 uvx maturin build --release
 ```
 
-This builds one wheel for CPython 3.9 and later. To build the wheel for free-threaded Python, build with a free-threaded interpreter, e.g. `uvx maturin build --release -i python3.15t`.
+This builds one wheel for CPython 3.11 and later. To build the wheel for free-threaded Python, build with a free-threaded interpreter, e.g. `uvx maturin build --release -i python3.15t`.
 
-This generates `.whl` files in `/target/wheels`. Then, create a Python environment of your choosing (with `numpy>=1.19.3` and `python>=3.9`), drop the `.whl` file in it and run `pip install <.whl filename>`, for example: `pip install rustfrc-1.2.0-cp39-abi3-win_amd64.whl`. Then, use `import rustfrc` in your Python script to be able to use the Rust functions. This should be generally valid for all platforms. The only real requirement is the availability of a Rust toolchain and Python for your platform.
+This generates `.whl` files in `target/wheels`. Install one into a Python 3.11 or later environment with `pip install <.whl filename>`, for example `pip install rustfrc-2.0.0-cp311-abi3-win_amd64.whl`, and use `import rustfrc`. The only requirements are a Rust toolchain and Python for your platform.
 
 Take a look at [PyO3](https://github.com/PyO3/pyo3) for other installation options as the only true requirement for building is using a tool that understands PyO3 bindings, as those are used in the Rust code.
 
@@ -64,16 +66,13 @@ If you want to build .whl files that are compatible with a wide range of Linux d
 
 ### uv
 
-First, install [uv](https://docs.astral.sh/uv/getting-started/installation/) and a Rust toolchain. Then run `uv sync` in the project directory. This creates a virtual environment in `.venv`, installs the (development) dependencies and builds the Rust extension with maturin. To develop against the oldest supported Python, pass it explicitly, e.g. `uv sync -p 3.9`.
+First, install [uv](https://docs.astral.sh/uv/getting-started/installation/) and a Rust toolchain. Then run `uv sync` in the project directory. This creates a virtual environment in `.venv`, installs the (development) dependencies and builds the Rust extension with maturin. To develop against the oldest supported Python, pass it explicitly, e.g. `uv sync -p 3.11`.
 
 After changing the Rust code, run `uv sync` again to rebuild the extension.
 
 Run the Rust tests using `cargo test` and the Python tests using `uv run pytest`.
 
-Note that type information is not available for the Rust functions, you will have to look at the Rust source code. Maturin builds a package structures as follows:
-- root `rustfrc` package
-    - `_internal`: this includes `binom_split_py`, etc.
-    - `split`: this is the Python source code in `python/rustfrc/split.py`
+The Rust code is in `src`: `binomial.rs` holds the split, `frc.rs` the FRC, `buffers.rs` reads arrays through the buffer protocol and makes the `memoryview`s, and `lib.rs` holds the Python functions. The compiled module is `rustfrc._internal`, and `python/rustfrc/_internal.pyi` holds its types. `cargo bench` times the split and the FRC at several sizes.
 
 ### Releasing
 
