@@ -84,6 +84,23 @@ pub struct FrcPlan {
 
 const OUTSIDE_HALF_DISK: u16 = u16::MAX;
 
+/// Copies `src` to `dst` with streaming stores where `dst` allows them: they write whole cache
+/// lines without reading them from memory first, which a normal store does. The caller fences.
+fn copy_streaming(dst: &mut [Complex32], src: &[Complex32]) {
+    assert_eq!(dst.len(), src.len());
+    #[cfg(target_arch = "x86_64")]
+    if (dst.as_ptr() as usize).is_multiple_of(16) && dst.len().is_multiple_of(2) {
+        use std::arch::x86_64::{_mm_loadu_ps, _mm_stream_ps};
+        let (d, s) = (dst.as_mut_ptr() as *mut f32, src.as_ptr() as *const f32);
+        for i in (0..2 * dst.len()).step_by(4) {
+            // SAFETY: i + 4 <= 2 len for both, d + i is 16-byte aligned, and SSE is part of x86-64.
+            unsafe { _mm_stream_ps(d.add(i), _mm_loadu_ps(s.add(i))) };
+        }
+        return;
+    }
+    dst.copy_from_slice(src)
+}
+
 /// The signed frequency of index i of a DFT of length n.
 fn frequency(i: usize, n: usize) -> i64 {
     if i <= (n - 1) / 2 {
@@ -251,10 +268,18 @@ impl FrcPlan {
                             )
                         };
                         for r in 0..height {
-                            run[r * width..(r + 1) * width]
-                                .copy_from_slice(&buffer[r * n + x0..r * n + x0 + width]);
+                            copy_streaming(
+                                &mut run[r * width..(r + 1) * width],
+                                &buffer[r * n + x0..r * n + x0 + width],
+                            );
                         }
                     }
+                    #[cfg(target_arch = "x86_64")]
+                    // SAFETY: SSE is part of x86-64. The fence orders the streaming stores before
+                    // whatever reads the spectrum next.
+                    unsafe {
+                        std::arch::x86_64::_mm_sfence()
+                    };
                     Ok(())
                 },
             )
