@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Runs the binom_variants benchmark on the VM of mono's NixOS lab on Azure (infra/winlab):
-# Standard_D8alds_v7, 8 AMD Zen 5 vCPUs, which have AVX-512 with vprolq and vpopcntq. Needs a
-# lease, which only the security key grants (infra/winlab/scripts/grant-lease.sh nix).
+# Runs a benchmark (binom_variants by default) on the VM of mono's NixOS lab on Azure
+# (infra/winlab): Standard_D8alds_v7, 8 AMD Zen 5 vCPUs, which have AVX-512 with vprolq and
+# vpopcntq. Needs a lease, which only the security key grants
+# (infra/winlab/scripts/grant-lease.sh nix).
 #
-#   scripts/bench-nixlab.sh start [--full] [FILTER]   copy this checkout over and start a run
-#   scripts/bench-nixlab.sh status [LINES]            show the end of the run's log
-#   scripts/bench-nixlab.sh stop                      end the run
-#   scripts/bench-nixlab.sh fetch                     copy the results to bench-results/nixlab/<run>
+#   scripts/bench-nixlab.sh start [--full] [--bench NAME] [FILTER]
+#       copy this checkout over and start a run
+#   scripts/bench-nixlab.sh status [LINES]   show the end of the run's log
+#   scripts/bench-nixlab.sh stop             end the run
+#   scripts/bench-nixlab.sh fetch            copy the results to bench-results/nixlab/<run>
 #
 # The arguments of start are those of scripts/bench-run.sh, which runs as the lab's job `bench`,
 # so that it outlives the SSH session. It leaves a file `done` when it ends.

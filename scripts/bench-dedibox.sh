@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Runs the binom_variants benchmark on borink-dedibox, dedicated hardware for benchmarks
-# (infra/scaleway-dedibox in mono). Needs an SSH session from mono's
+# Runs a benchmark (binom_variants by default) on borink-dedibox, dedicated hardware for
+# benchmarks (infra/scaleway-dedibox in mono). Needs an SSH session from mono's
 # infra/hetzner-node/scripts/grant-session.sh.
 #
-#   scripts/bench-dedibox.sh start [--full] [FILTER]   copy this checkout over and start a run
-#   scripts/bench-dedibox.sh status [LINES]            show the end of the run's log
-#   scripts/bench-dedibox.sh stop                      end the run
-#   scripts/bench-dedibox.sh fetch                     copy the results to bench-results/dedibox/<run>
+#   scripts/bench-dedibox.sh start [--full] [--bench NAME] [FILTER]
+#       copy this checkout over and start a run
+#   scripts/bench-dedibox.sh status [LINES]   show the end of the run's log
+#   scripts/bench-dedibox.sh stop             end the run
+#   scripts/bench-dedibox.sh fetch            copy the results to bench-results/dedibox/<run>
 #
 # A run builds for the x86-64 baseline of the wheels and takes about 5 minutes; --full adds a build
 # for the host CPU. FILTER is a Criterion filter, a regular expression over benchmark names such

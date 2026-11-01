@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Runs on the benchmark machine, started by bench-dedibox.sh or bench-nixlab.sh. Builds the
-# binom_variants benchmark for the x86-64 baseline that the wheels target and runs it with one
-# thread pinned to a core and with every thread; --full also builds and runs it for the host CPU
-# (target-cpu=native). Results go to results/: Criterion's output per configuration, and its
-# estimates under results/criterion-<target>/, one baseline per run.
+# Runs on the benchmark machine, started by bench-dedibox.sh or bench-nixlab.sh. Builds a
+# benchmark (--bench NAME, binom_variants by default) for the x86-64 baseline that the wheels
+# target and runs it with one thread pinned to a core and with every thread; --full also builds
+# and runs it for the host CPU (target-cpu=native). The library's tests run first. Results go to
+# results/: Criterion's output per configuration, and its estimates under
+# results/criterion-<target>/, one baseline per run.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -14,10 +15,14 @@ if [[ -z ${RUSTFRC_BENCH_SHELL:-} ]]; then
 fi
 
 targets=(baseline)
-if [[ ${1:-} == --full ]]; then
-	targets=(baseline native)
-	shift
-fi
+bench=binom_variants
+while [[ ${1:-} == --* ]]; do
+	case $1 in
+	--full) targets=(baseline native); shift ;;
+	--bench) bench=$2; shift 2 ;;
+	*) echo "unknown option $1" >&2; exit 2 ;;
+	esac
+done
 filter=${1:-}
 # The process group, which bench-dedibox.sh stop ends.
 ps -o pgid= $$ | tr -d " " > pgid
@@ -28,7 +33,7 @@ rm -rf results
 mkdir -p results
 
 {
-	echo "run: $(cat run-id), revision $(cat revision), targets ${targets[*]}, filter '${filter}'"
+	echo "run: $(cat run-id), revision $(cat revision), bench $bench, targets ${targets[*]}, filter '${filter}'"
 	uname -a
 	rustc -vV
 	cargo -V
@@ -41,7 +46,7 @@ mkdir -p results
 # The samplers must be right on this CPU before their speed means anything: the tests compare
 # every path that the CPU has, such as AVX-512, with the portable one.
 echo "=== tests ($(date -u +%H:%M:%S))"
-cargo test --release --lib binom_variants 2>&1 | tee results/tests.txt
+cargo test --release --lib 2>&1 | tee results/tests.txt
 
 for target in "${targets[@]}"; do
 	if [[ $target == native ]]; then rustflags="-C target-cpu=native"; else rustflags=""; fi
@@ -59,9 +64,9 @@ for target in "${targets[@]}"; do
 			unset RAYON_NUM_THREADS
 		fi
 		# Build on every core first, so that only the benchmark is pinned.
-		RUSTFLAGS=$rustflags CARGO_TARGET_DIR=target/$target cargo bench --bench binom_variants --no-run
+		RUSTFLAGS=$rustflags CARGO_TARGET_DIR=target/$target cargo bench --bench "$bench" --no-run
 		RUSTFLAGS=$rustflags CARGO_TARGET_DIR=target/$target "${pin[@]}" \
-			cargo bench --bench binom_variants -- --noplot --save-baseline "$name" ${filter:+"$filter"} \
+			cargo bench --bench "$bench" -- --noplot --save-baseline "$name" ${filter:+"$filter"} \
 			2>&1 | tee "results/$name.txt"
 	done
 	cp -r "target/$target/criterion" "results/criterion-$target"
