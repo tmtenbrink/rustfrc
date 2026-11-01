@@ -3,7 +3,7 @@
 # releases.
 #
 # The pyo3 features in Cargo.toml give two wheels per platform: `abi3` for
-# CPython 3.9 and later, and `abi3t` for free-threaded CPython 3.15t and
+# CPython 3.10 and later, and `abi3t` for free-threaded CPython 3.15t and
 # later. maturin builds one kind per run, chosen by the interpreter it builds
 # against.
 #
@@ -137,8 +137,8 @@ jobs:
         run: |
           run_tests() { uv run --isolated --no-project -p "$1" --with "$2" --with pytest pytest -q tests; }
           ls dist
-          run_tests 3.9 dist/*-cp39-abi3-*.whl
-          run_tests 3.15 dist/*-cp39-abi3-*.whl
+          run_tests 3.10 dist/*-cp310-abi3-*.whl
+          run_tests 3.15 dist/*-cp310-abi3-*.whl
           run_tests 3.15t dist/*-abi3.abi3t-*.whl
 
   # Builds the extension from the sdist alone, as pip does on a platform

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+
+- Python 3.9 support, which ended in October 2025. rustfrc now requires Python 3.10 or later and NumPy 1.21.2 or later, the oldest NumPy with wheels for Python 3.10. Wheels are tagged `cp310-abi3`.
+
+### Security
+
+- Development uses pytest 9.0.3 or later on every Python, which fixes its tmpdir handling (GHSA-6w46-j5rx-g56g). pytest 9 does not support Python 3.9.
+
 ## 1.2.0 - 2026-11-01
 
 ### Removed

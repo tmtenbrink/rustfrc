@@ -5,7 +5,7 @@
 
 rustfrc is a Python package with some fast Rust functions that are useful when performing Fourier Ring Correlation (FRC) computations for resolution determination in microscopy (specifically optical nanoscopy). It was originally developed for use in a Bachelor end project for the TU Delft in the period 2021-2022. See the Python package [`frc`](https://github.com/tiptenbrink/frc) for examples of its usage. The `test_split.py` file in the `tests` directory also holds some examples.
 
-Since rustfrc contains compiled (Rust) extensions and is not pure Python, it is not available for all platforms, but only for those with available compiled wheels or a Rust toolchain and `maturin` support (see below). They are available for Windows (x86_64), macOS (universal2, which runs on both Apple Silicon and Intel) and Linux (x86_64, glibc 2.28 and later), for CPython 3.9 and later and for free-threaded CPython 3.15t and later. However, since Rust and Python are supported on many platforms, it is not difficult to compile for other platforms (see below).
+Since rustfrc contains compiled (Rust) extensions and is not pure Python, it is not available for all platforms, but only for those with available compiled wheels or a Rust toolchain and `maturin` support (see below). They are available for Windows (x86_64), macOS (universal2, which runs on both Apple Silicon and Intel) and Linux (x86_64, glibc 2.28 and later), for CPython 3.10 and later and for free-threaded CPython 3.15t and later. However, since Rust and Python are supported on many platforms, it is not difficult to compile for other platforms (see below).
 
 ## Features
 
@@ -17,8 +17,8 @@ Furthermore, there are also (since version 1.1) `sqr_abs(a: ndarray) -> ndarray`
 
 ## Requirements
 
-* Python 3.9 or later, or free-threaded Python 3.15t or later
-* NumPy 1.19.3+ (newer Python versions need newer NumPy, e.g. Python 3.13 requires NumPy 2.1+)
+* Python 3.10 or later, or free-threaded Python 3.15t or later
+* NumPy 1.21.2+ (newer Python versions need newer NumPy, e.g. Python 3.13 requires NumPy 2.1+)
 
 ## Performance
 
@@ -50,9 +50,9 @@ rustfrc uses [uv](https://github.com/astral-sh/uv) as its Python project manager
 uvx maturin build --release
 ```
 
-This builds one wheel for CPython 3.9 and later. To build the wheel for free-threaded Python, build with a free-threaded interpreter, e.g. `uvx maturin build --release -i python3.15t`.
+This builds one wheel for CPython 3.10 and later. To build the wheel for free-threaded Python, build with a free-threaded interpreter, e.g. `uvx maturin build --release -i python3.15t`.
 
-This generates `.whl` files in `/target/wheels`. Then, create a Python environment of your choosing (with `numpy>=1.19.3` and `python>=3.9`), drop the `.whl` file in it and run `pip install <.whl filename>`, for example: `pip install rustfrc-1.2.0-cp39-abi3-win_amd64.whl`. Then, use `import rustfrc` in your Python script to be able to use the Rust functions. This should be generally valid for all platforms. The only real requirement is the availability of a Rust toolchain and Python for your platform.
+This generates `.whl` files in `/target/wheels`. Then, create a Python environment of your choosing (with `numpy>=1.21.2` and `python>=3.10`), drop the `.whl` file in it and run `pip install <.whl filename>`, for example: `pip install rustfrc-1.2.0-cp310-abi3-win_amd64.whl`. Then, use `import rustfrc` in your Python script to be able to use the Rust functions. This should be generally valid for all platforms. The only real requirement is the availability of a Rust toolchain and Python for your platform.
 
 Take a look at [PyO3](https://github.com/PyO3/pyo3) for other installation options as the only true requirement for building is using a tool that understands PyO3 bindings, as those are used in the Rust code.
 
@@ -64,7 +64,7 @@ If you want to build .whl files that are compatible with a wide range of Linux d
 
 ### uv
 
-First, install [uv](https://docs.astral.sh/uv/getting-started/installation/) and a Rust toolchain. Then run `uv sync` in the project directory. This creates a virtual environment in `.venv`, installs the (development) dependencies and builds the Rust extension with maturin. To develop against the oldest supported Python, pass it explicitly, e.g. `uv sync -p 3.9`.
+First, install [uv](https://docs.astral.sh/uv/getting-started/installation/) and a Rust toolchain. Then run `uv sync` in the project directory. This creates a virtual environment in `.venv`, installs the (development) dependencies and builds the Rust extension with maturin. To develop against the oldest supported Python, pass it explicitly, e.g. `uv sync -p 3.10`.
 
 After changing the Rust code, run `uv sync` again to rebuild the extension.
 

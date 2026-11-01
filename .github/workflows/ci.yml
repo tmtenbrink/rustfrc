@@ -14,7 +14,7 @@ jobs:
       matrix:
         # The oldest Python, with the oldest NumPy, and the newest. wheels.yml
         # tests the wheels that a release publishes.
-        py-version: ['3.9', '3.15']
+        py-version: ['3.10', '3.15']
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -30,8 +30,8 @@ jobs:
       run: uv sync --locked
 
     - name: Test lowest NumPy
-      if: ${{ matrix.py-version == '3.9' }}
-      run: uv pip install numpy==1.19.3
+      if: ${{ matrix.py-version == '3.10' }}
+      run: uv pip install numpy==1.21.2
 
     - name: cargo test
       run: cargo test --locked
