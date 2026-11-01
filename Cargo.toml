@@ -16,6 +16,7 @@ num-complex = "0.4.6"
 num-traits = "0.2.19"
 rayon = "1.12.0"
 rand_xoshiro = "0.8"
+rustfft = "6"
 
 [dependencies.pyo3]
 version = "0.30.1"
@@ -33,4 +34,8 @@ harness = false
 
 [[bench]]
 name = "binom_variants"
+harness = false
+
+[[bench]]
+name = "frc"
 harness = false

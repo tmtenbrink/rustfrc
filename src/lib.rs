@@ -14,6 +14,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 pub mod binom_variants;
+pub mod frc;
 
 #[pymodule]
 fn rustfrc(m: &Bound<'_, PyModule>) -> PyResult<()> {
