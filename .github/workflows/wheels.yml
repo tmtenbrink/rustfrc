@@ -1,0 +1,164 @@
+# Builds and tests the wheels and the sdist that a release publishes. ci.yml
+# runs it on every push and pull request, and release.yml on the commit it
+# releases.
+#
+# The pyo3 features in Cargo.toml give two wheels per platform: `abi3` for
+# CPython 3.9 and later, and `abi3t` for free-threaded CPython 3.15t and
+# later. maturin builds one kind per run, chosen by the interpreter it builds
+# against.
+#
+# The jobs that build install only pinned tools. The tests install the newest
+# pytest and NumPy, so they run in their own jobs, on the uploaded files.
+name: wheels
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: The commit to build; the caller's commit if empty
+        required: false
+        type: string
+        default: ''
+
+permissions: {}
+
+jobs:
+  wheel:
+    name: Wheel ${{ matrix.platform.name }} ${{ matrix.abi.name }}
+    runs-on: ${{ matrix.platform.os }}
+    permissions:
+      contents: read # to check out the commit
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { name: linux, os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { name: macos, os: macos-latest, target: universal2-apple-darwin }
+          - { name: windows, os: windows-latest, target: x86_64-pc-windows-msvc }
+        abi:
+          # `python` is the interpreter that maturin builds against, and
+          # `manylinux` the same interpreter in the manylinux image.
+          - { name: abi3, python: '3.13', manylinux: cp313-cp313 }
+          - { name: abi3t, python: '3.15t', manylinux: cp315-cp315t }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.13.6
+      # A full path, because maturin-action puts the runner's own Pythons
+      # first on the PATH on macOS. On Linux, maturin builds in the manylinux
+      # image, with that image's interpreter.
+      - name: Find the build interpreter
+        id: python
+        env:
+          PYTHON: ${{ matrix.abi.python }}
+          MANYLINUX: ${{ matrix.abi.manylinux }}
+        run: |
+          if [[ $RUNNER_OS == Linux ]]; then
+            echo "path=/opt/python/$MANYLINUX/bin/python" >> "$GITHUB_OUTPUT"
+          else
+            uv python install "$PYTHON"
+            echo "path=$(uv python find "$PYTHON")" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          maturin-version: v1.16.0
+          rust-toolchain: 1.99.1
+          target: ${{ matrix.platform.target }}
+          # glibc 2.28 and later. Only Linux builds in the container.
+          manylinux: 2_28
+          container: quay.io/pypa/manylinux_2_28_x86_64:2026.10.31-1@sha256:43f7ce12d79ed98b6dbfa3291d5afe389efd40a7e76de089959ffe99501b6edf
+          args: --release --locked --out dist -i ${{ steps.python.outputs.path }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-${{ matrix.platform.name }}-${{ matrix.abi.name }}
+          path: dist/*.whl
+          retention-days: 7
+
+  sdist:
+    name: Sdist
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # to check out the commit
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.13.6
+      - run: uvx maturin@1.16.0 sdist --out dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-sdist
+          path: dist/*.tar.gz
+          retention-days: 7
+
+  # Tests both wheels of a platform, installed from the uploaded files: the
+  # abi3 wheel on the oldest and the newest Python it supports, and the abi3t
+  # wheel on free-threaded Python. The checkout has no importable rustfrc.
+  test-wheel:
+    name: Test ${{ matrix.platform.name }}
+    needs: wheel
+    runs-on: ${{ matrix.platform.os }}
+    permissions:
+      contents: read # to check out the tests
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { name: linux, os: ubuntu-latest }
+          - { name: macos, os: macos-latest }
+          - { name: windows, os: windows-latest }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: dist-${{ matrix.platform.name }}-*
+          merge-multiple: true
+          path: dist
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.13.6
+      - name: Test the wheels
+        run: |
+          run_tests() { uv run --isolated --no-project -p "$1" --with "$2" --with pytest pytest -q tests; }
+          ls dist
+          run_tests 3.9 dist/*-cp39-abi3-*.whl
+          run_tests 3.15 dist/*-cp39-abi3-*.whl
+          run_tests 3.15t dist/*-abi3.abi3t-*.whl
+
+  # Builds the extension from the sdist alone, as pip does on a platform
+  # without a wheel.
+  test-sdist:
+    name: Test sdist
+    needs: sdist
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # to check out the tests
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist-sdist
+          path: dist
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.13.6
+      - run: uv run --isolated --no-project -p 3.15 --with dist/*.tar.gz --with pytest pytest -q tests
