@@ -8,9 +8,10 @@
 //!
 //! - Both halves go through one complex FFT, of z = k + i (n - k): their spectra are
 //!   F1(f) = (Z(f) + conj Z(-f)) / 2 and F2(f) = (Z(f) - conj Z(-f)) / 2i.
-//! - The split writes z a few rows at a time and transforms those rows while they are in cache.
-//! - The column FFTs copy 16 columns at a time into a buffer that stays in cache, so there is no
-//!   transpose pass.
+//! - The split writes z a block of rows at a time and transforms those rows while they are in
+//!   cache.
+//! - The spectrum is stored in panels of 16 columns, so the column FFTs read and write memory in
+//!   order, a panel at a time, without a transpose pass.
 //! - F1 and F2 of a real image satisfy F(-f) = conj F(f), so the ring sums run over half the plane.
 //!
 //! Ring r holds the frequencies f with round(|f|) = r. That DIPlib's `RadialSum`, which frc uses,
@@ -47,30 +48,37 @@ impl RingSums {
     }
 }
 
-/// Counts that one task of the split samples: a chunk of `LanesSplitter`, so whole rows of them.
-const SPLIT_TASK_COUNTS: usize = 16384;
+/// Columns of one panel of the spectrum. The spectrum is stored in panels of `PANEL` columns:
+/// panel p holds columns PANEL p .. PANEL p + w (w = PANEL, but for the last panel the rest),
+/// row after row, so that the column FFTs read and write memory in order. 16 complex f32 are two
+/// cache lines.
+const PANEL: usize = 16;
 
-/// Columns that the column FFTs copy into one buffer: 16 complex f32 are two cache lines of a row.
-const COLUMN_BLOCK: usize = 16;
+/// Counts that one task of the split samples and transforms: whole rows, 16 of them at 4096,
+/// so that each task writes 2 KiB at a time into every panel.
+const SPLIT_TASK_COUNTS: usize = 65536;
 
 /// Complex f32s between the starts of two rows of the column buffer beyond the row itself: one
-/// cache line, so that rows do not start a multiple of 4 KiB apart, where the 16 values that one
-/// image row adds to them would all fall in the same cache set.
+/// cache line, so that rows do not start a multiple of 4 KiB apart, where the values that one
+/// row of a panel adds to them would all fall in the same cache set.
 const COLUMN_PAD: usize = 8;
 
-/// Rows ahead of the current tile that the column copies prefetch. Rows 32 KiB apart defeat the
-/// hardware prefetchers, which follow streams within a 4 KiB page.
-const PREFETCH_ROWS: usize = 64;
+/// Where entry (y, x) of an n x n image lies in the panel layout.
+fn panel_index(n: usize, y: usize, x: usize) -> usize {
+    let p = x / PANEL;
+    let width = PANEL.min(n - p * PANEL);
+    p * PANEL * n + y * width + (x - p * PANEL)
+}
 
 /// What `one_frc` needs for images of one size, made once like an FFT plan.
 pub struct FrcPlan {
     n: usize,
     fft: Arc<dyn Fft<f32>>,
-    /// For each frequency of the half plane fy > 0 or (fy = 0, fx > 0) with r = round(|f|) < N/2,
-    /// its ring r; every other entry is `OUTSIDE_HALF_DISK`.
+    /// In the panel layout, for each frequency of the half plane fy > 0 or (fy = 0, fx > 0) with
+    /// r = round(|f|) < N/2, its ring r; every other entry is `OUTSIDE_HALF_DISK`.
     half_plane_rings: Vec<u16>,
     ring_counts: Vec<u64>,
-    /// The halves as z = k + i (n - k), then the spectrum Z.
+    /// In the panel layout, the halves as z = k + i (n - k), then the spectrum Z.
     spectrum: Vec<Complex32>,
 }
 
@@ -89,33 +97,32 @@ fn ring_of(fy: i64, fx: i64) -> usize {
     ((fy * fy + fx * fx) as f64).sqrt().round() as usize
 }
 
-/// `FrcPlan::spectrum` shared by the tasks of the column FFTs, which each touch their own
-/// columns only.
-#[derive(Clone, Copy)]
-struct SpectrumColumns(*mut Complex32);
-// SAFETY: the tasks that share it read and write disjoint columns.
-unsafe impl Send for SpectrumColumns {}
-unsafe impl Sync for SpectrumColumns {}
+/// The rows that hold the half plane fy > 0 or fy = 0: 0 ..= (n - 1) / 2.
+fn half_plane_rows(n: usize) -> usize {
+    (n - 1) / 2 + 1
+}
 
-impl SpectrumColumns {
+/// `FrcPlan::spectrum` shared by the tasks of the split, which each write their own rows of every
+/// panel only.
+#[derive(Clone, Copy)]
+struct SpectrumRows(*mut Complex32);
+// SAFETY: the tasks that share it write disjoint rows.
+unsafe impl Send for SpectrumRows {}
+unsafe impl Sync for SpectrumRows {}
+
+impl SpectrumRows {
     fn ptr(self) -> *mut Complex32 {
         self.0
     }
 }
 
-/// Asks for the two cache lines of columns x0..x0 + 16 of rows y..y + 16 that exist.
-#[inline(always)]
-fn prefetch_column_tile(p: *mut Complex32, n: usize, x0: usize, y: usize) {
-    #[cfg(target_arch = "x86_64")]
-    for row in y..(y + COLUMN_BLOCK).min(n) {
-        use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
-        // SAFETY: a prefetch accesses no memory, and the address lies within the spectrum.
-        unsafe {
-            let line = p.add(row * n + x0) as *const i8;
-            _mm_prefetch(line, _MM_HINT_T0);
-            _mm_prefetch(line.add(64), _MM_HINT_T0);
-        }
-    }
+/// How a task of the split leaves its rows.
+#[derive(Clone, Copy, PartialEq)]
+enum RowStep {
+    Split,
+    SplitAndTransform,
+    /// No split: transform the rows that the spectrum holds.
+    Transform,
 }
 
 impl FrcPlan {
@@ -126,23 +133,16 @@ impl FrcPlan {
             "unsupported image size {n}"
         );
         let mut half_plane_rings = vec![OUTSIDE_HALF_DISK; n * n];
-        half_plane_rings
-            .par_chunks_mut(n)
-            .enumerate()
-            .for_each(|(y, row)| {
-                let fy = frequency(y, n);
-                for (x, ring) in row.iter_mut().enumerate() {
-                    let fx = frequency(x, n);
-                    let r = ring_of(fy, fx);
-                    if r < n / 2 && (fy > 0 || (fy == 0 && fx > 0)) {
-                        *ring = r as u16;
-                    }
-                }
-            });
         let mut ring_counts = vec![0; n / 2];
-        for &r in &half_plane_rings {
-            if r != OUTSIDE_HALF_DISK {
-                ring_counts[r as usize] += 2;
+        for y in 0..n {
+            let fy = frequency(y, n);
+            for x in 0..n {
+                let fx = frequency(x, n);
+                let r = ring_of(fy, fx);
+                if r < n / 2 && (fy > 0 || (fy == 0 && fx > 0)) {
+                    half_plane_rings[panel_index(n, y, x)] = r as u16;
+                    ring_counts[r] += 2;
+                }
             }
         }
         ring_counts[0] += 1;
@@ -180,31 +180,74 @@ impl FrcPlan {
         Ok(self.ring_sums())
     }
 
-    fn split_rows(
+    /// Runs `step` on blocks of rows: each task works on its rows in a buffer of its own, in row
+    /// order, and copies them into every panel of the spectrum at the end.
+    fn rows_through_buffer(
         &mut self,
-        counts: &[i32],
+        counts: Option<&[i32]>,
         seed: u64,
-        transform: bool,
+        step: RowStep,
     ) -> Result<(), ToUsizeError> {
-        assert_eq!(
-            counts.len(),
-            self.n * self.n,
-            "counts must be an n x n image"
-        );
-        let rows = (SPLIT_TASK_COUNTS / self.n).max(1) * self.n;
+        let n = self.n;
+        if let Some(counts) = counts {
+            assert_eq!(counts.len(), n * n, "counts must be an n x n image");
+        }
+        let rows = (SPLIT_TASK_COUNTS / n).max(1);
         let splitter = LanesSplitter::<16>::new(seed, CpuFeatures::Detected);
         let fft = &self.fft;
-        self.spectrum
-            .par_chunks_mut(rows)
-            .zip(counts.par_chunks(rows))
-            .enumerate()
+        let spectrum = SpectrumRows(self.spectrum.as_mut_ptr());
+        (0..n.div_ceil(rows))
+            .into_par_iter()
             .map_init(
-                || vec![Complex32::default(); fft.get_inplace_scratch_len()],
-                |scratch, (i, (z, c))| {
-                    splitter
-                        .split_chunk(i, c, z, |n, k| Complex32::new(k as f32, (n - k) as f32))?;
-                    if transform {
-                        fft.process_with_scratch(z, scratch);
+                || {
+                    (
+                        vec![Complex32::default(); rows * n],
+                        vec![Complex32::default(); fft.get_inplace_scratch_len()],
+                    )
+                },
+                |(buffer, scratch), task| {
+                    let y0 = task * rows;
+                    let height = rows.min(n - y0);
+                    let buffer = &mut buffer[..height * n];
+                    let p = spectrum.ptr();
+                    let panels = n.div_ceil(PANEL);
+                    if step == RowStep::Transform {
+                        for panel in 0..panels {
+                            let (x0, width) = (panel * PANEL, PANEL.min(n - panel * PANEL));
+                            for r in 0..height {
+                                // SAFETY: the run lies within the spectrum, in rows y0..y0 + height,
+                                // which only this task touches.
+                                let run = unsafe {
+                                    std::slice::from_raw_parts(
+                                        p.add(panel_index(n, y0 + r, x0)),
+                                        width,
+                                    )
+                                };
+                                buffer[r * n + x0..r * n + x0 + width].copy_from_slice(run);
+                            }
+                        }
+                    } else {
+                        let counts = &counts.unwrap()[y0 * n..(y0 + height) * n];
+                        splitter.split_chunk(task, counts, buffer, |n, k| {
+                            Complex32::new(k as f32, (n - k) as f32)
+                        })?;
+                    }
+                    if step != RowStep::Split {
+                        fft.process_with_scratch(buffer, scratch);
+                    }
+                    for panel in 0..panels {
+                        let (x0, width) = (panel * PANEL, PANEL.min(n - panel * PANEL));
+                        // SAFETY: as above; rows y0..y0 + height of one panel are one run.
+                        let run = unsafe {
+                            std::slice::from_raw_parts_mut(
+                                p.add(panel_index(n, y0, x0)),
+                                height * width,
+                            )
+                        };
+                        for r in 0..height {
+                            run[r * width..(r + 1) * width]
+                                .copy_from_slice(&buffer[r * n + x0..r * n + x0 + width]);
+                        }
                     }
                     Ok(())
                 },
@@ -214,65 +257,46 @@ impl FrcPlan {
 
     /// The split alone, without the row FFTs: a step of `one_frc` for checks and benchmarks.
     pub fn split(&mut self, counts: &[i32], seed: u64) -> Result<(), ToUsizeError> {
-        self.split_rows(counts, seed, false)
+        self.rows_through_buffer(Some(counts), seed, RowStep::Split)
     }
 
-    /// The split and the row FFTs, a few rows at a time while they are in cache.
+    /// The split and the row FFTs, a block of rows at a time while they are in cache.
     pub fn split_fft_rows(&mut self, counts: &[i32], seed: u64) -> Result<(), ToUsizeError> {
-        self.split_rows(counts, seed, true)
+        self.rows_through_buffer(Some(counts), seed, RowStep::SplitAndTransform)
     }
 
     /// The row FFTs alone, of whatever the spectrum holds.
     pub fn fft_rows(&mut self) {
-        let fft = &self.fft;
-        let rows = (SPLIT_TASK_COUNTS / self.n).max(1) * self.n;
-        self.spectrum.par_chunks_mut(rows).for_each_init(
-            || vec![Complex32::default(); fft.get_inplace_scratch_len()],
-            |scratch, rows| fft.process_with_scratch(rows, scratch),
-        );
+        self.rows_through_buffer(None, 0, RowStep::Transform)
+            .unwrap();
     }
 
-    /// The FFT of every column, in place: each task copies up to `COLUMN_BLOCK` columns into a
-    /// buffer that stays in cache, transforms them as rows, and copies them back.
+    /// The FFT of every column, in place, a panel at a time: each task copies its panel's columns
+    /// into a buffer that stays in cache, transforms them, and copies them back.
     pub fn fft_columns(&mut self) {
         let n = self.n;
         let fft = &self.fft;
-        let z = SpectrumColumns(self.spectrum.as_mut_ptr());
         let stride = n + COLUMN_PAD;
-        (0..n.div_ceil(COLUMN_BLOCK)).into_par_iter().for_each_init(
+        self.spectrum.par_chunks_mut(PANEL * n).for_each_init(
             || {
-                let columns = vec![Complex32::default(); COLUMN_BLOCK * stride];
                 (
-                    columns,
+                    vec![Complex32::default(); PANEL * stride],
                     vec![Complex32::default(); fft.get_inplace_scratch_len()],
                 )
             },
-            |(columns, scratch), block| {
-                let p = z.ptr();
-                let x0 = block * COLUMN_BLOCK;
-                let width = COLUMN_BLOCK.min(n - x0);
-                // In tiles of COLUMN_BLOCK rows: the tile's rows come into L1 once, and each row
-                // of the buffer gets consecutive values, whole cache lines.
-                for y0 in (0..n).step_by(COLUMN_BLOCK) {
-                    prefetch_column_tile(p, n, x0, y0 + PREFETCH_ROWS);
-                    for c in 0..width {
-                        for y in y0..(y0 + COLUMN_BLOCK).min(n) {
-                            // SAFETY: y * n + x0 + c < n * n, and only this task touches columns
-                            // x0..x0 + width.
-                            columns[c * stride + y] = unsafe { *p.add(y * n + x0 + c) };
-                        }
+            |(columns, scratch), panel| {
+                let width = panel.len() / n;
+                for (y, row) in panel.chunks_exact(width).enumerate() {
+                    for (c, &v) in row.iter().enumerate() {
+                        columns[c * stride + y] = v;
                     }
                 }
                 for c in 0..width {
                     fft.process_with_scratch(&mut columns[c * stride..c * stride + n], scratch);
                 }
-                for y0 in (0..n).step_by(COLUMN_BLOCK) {
-                    prefetch_column_tile(p, n, x0, y0 + PREFETCH_ROWS);
-                    for y in y0..(y0 + COLUMN_BLOCK).min(n) {
-                        for c in 0..width {
-                            // SAFETY: as above.
-                            unsafe { *p.add(y * n + x0 + c) = columns[c * stride + y] };
-                        }
+                for (y, row) in panel.chunks_exact_mut(width).enumerate() {
+                    for (c, v) in row.iter_mut().enumerate() {
+                        *v = columns[c * stride + y];
                     }
                 }
             },
@@ -284,8 +308,8 @@ impl FrcPlan {
         let n = self.n;
         let spectrum = &self.spectrum;
         let terms = |y: usize, x: usize| {
-            let z = spectrum[y * n + x];
-            let zm = spectrum[((n - y) % n) * n + (n - x) % n].conj();
+            let z = spectrum[panel_index(n, y, x)];
+            let zm = spectrum[panel_index(n, (n - y) % n, (n - x) % n)].conj();
             let f1 = (z + zm) * 0.5;
             let f2 = (z - zm) * Complex32::new(0.0, -0.5);
             [
@@ -299,16 +323,21 @@ impl FrcPlan {
                 a[i] += b[i];
             }
         };
+        let rows = half_plane_rows(n);
         let sums = self
             .half_plane_rings
-            .par_chunks(n)
+            .par_chunks(PANEL * n)
             .enumerate()
             .fold(
                 || vec![[0f64; 3]; n / 2],
-                |mut acc, (y, rings)| {
-                    for (x, &r) in rings.iter().enumerate() {
-                        if r != OUTSIDE_HALF_DISK {
-                            add(&mut acc[r as usize], terms(y, x));
+                |mut acc, (panel, rings)| {
+                    let width = rings.len() / n;
+                    let x0 = panel * PANEL;
+                    for (y, row) in rings[..rows * width].chunks_exact(width).enumerate() {
+                        for (c, &r) in row.iter().enumerate() {
+                            if r != OUTSIDE_HALF_DISK {
+                                add(&mut acc[r as usize], terms(y, x0 + c));
+                            }
                         }
                     }
                     acc
@@ -337,6 +366,14 @@ impl FrcPlan {
                     count,
                 }
             })
+            .collect()
+    }
+
+    /// The spectrum, or after `split` the halves, in row-major order.
+    pub fn spectrum_row_major(&self) -> Vec<Complex32> {
+        let n = self.n;
+        (0..n * n)
+            .map(|i| self.spectrum[panel_index(n, i / n, i % n)])
             .collect()
     }
 }
@@ -431,7 +468,7 @@ mod tests {
             let counts = pattern_image(n, 50.0, n as u64);
             let mut plan = FrcPlan::new(n);
             plan.split(&counts, 7).unwrap();
-            let halves = plan.spectrum.clone();
+            let halves = plan.spectrum_row_major();
             plan.fft_rows();
             plan.fft_columns();
             let got = plan.ring_sums();
