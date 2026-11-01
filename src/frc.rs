@@ -10,8 +10,10 @@
 //!   F1(f) = (Z(f) + conj Z(-f)) / 2 and F2(f) = (Z(f) - conj Z(-f)) / 2i.
 //! - The split writes z a block of rows at a time and transforms those rows while they are in
 //!   cache.
-//! - The spectrum is stored in panels of 16 columns, so the column FFTs read and write memory in
-//!   order, a panel at a time, without a transpose pass.
+//! - The spectrum is stored in panels of 8 columns and their 8 mirrors, so the column FFTs read
+//!   memory in order, a panel at a time, without a transpose pass, and each panel holds both
+//!   Z(f) and Z(-f) for its ring terms. The ring sums are taken while the panel is in cache, and
+//!   the column FFTs are never written back.
 //! - F1 and F2 of a real image satisfy F(-f) = conj F(f), so the ring sums run over half the plane.
 //!
 //! Ring r holds the frequencies f with round(|f|) = r. That DIPlib's `RadialSum`, which frc uses,
@@ -48,14 +50,15 @@ impl RingSums {
     }
 }
 
-/// Columns of one panel of the spectrum. The spectrum is stored in panels of `PANEL` columns:
-/// panel p holds columns PANEL p .. PANEL p + w (w = PANEL, but for the last panel the rest),
-/// row after row, so that the column FFTs read and write memory in order. 16 complex f32 are two
-/// cache lines.
-const PANEL: usize = 16;
+/// Pairs of mirrored columns, x and n - x, that one panel of the spectrum holds. Each panel holds
+/// the 8 columns 8q + 1 ..= 8q + 8 followed by their mirrors n - 8q - 8 ..= n - 8q - 1, row after
+/// row, so the column FFTs read and write memory in order, and the ring sums, which need Z(f) and
+/// Z(-f), find both in the same panel. The columns that are their own mirror, 0 and for even n
+/// also n / 2, share a last panel.
+const PAIRS_PER_PANEL: usize = 8;
 
 /// Counts that one task of the split samples and transforms: whole rows, 16 of them at 4096,
-/// so that each task writes 2 KiB at a time into every panel.
+/// so that each task writes runs of 16 rows into every panel.
 const SPLIT_TASK_COUNTS: usize = 65536;
 
 /// Complex f32s between the starts of two rows of the column buffer beyond the row itself: one
@@ -63,42 +66,96 @@ const SPLIT_TASK_COUNTS: usize = 65536;
 /// row of a panel adds to them would all fall in the same cache set.
 const COLUMN_PAD: usize = 8;
 
-/// Where entry (y, x) of an n x n image lies in the panel layout.
-fn panel_index(n: usize, y: usize, x: usize) -> usize {
-    let p = x / PANEL;
-    let width = PANEL.min(n - p * PANEL);
-    p * PANEL * n + y * width + (x - p * PANEL)
+/// Columns that one panel of the spectrum holds, where it starts, and for each of its columns the
+/// position of the mirror column in the panel.
+struct Panel {
+    start: usize,
+    columns: Vec<usize>,
+    mirror_slots: Vec<usize>,
+    /// The columns as runs of consecutive ones: (first column, its position in the panel, length).
+    runs: Vec<(usize, usize, usize)>,
+}
+
+/// The runs of consecutive columns in `columns`, for copying a panel's row in a few pieces.
+fn column_runs(columns: &[usize]) -> Vec<(usize, usize, usize)> {
+    let mut runs: Vec<(usize, usize, usize)> = Vec::new();
+    for (c, &x) in columns.iter().enumerate() {
+        match runs.last_mut() {
+            Some((first, _, len)) if *first + *len == x => *len += 1,
+            _ => runs.push((x, c, 1)),
+        }
+    }
+    runs
+}
+
+/// The panels of an n x n spectrum, and where each column lies in them.
+struct PanelLayout {
+    panels: Vec<Panel>,
+    /// For each column: its panel, and its position in the panel.
+    column_slots: Vec<(usize, usize)>,
+}
+
+impl PanelLayout {
+    fn new(n: usize) -> Self {
+        let pairs = (n - 1) / 2;
+        let mut groups: Vec<Vec<usize>> = (0..pairs.div_ceil(PAIRS_PER_PANEL))
+            .map(|q| {
+                let first = q * PAIRS_PER_PANEL + 1;
+                let last = (first + PAIRS_PER_PANEL - 1).min(pairs);
+                (first..=last).chain(n - last..=n - first).collect()
+            })
+            .collect();
+        groups.push(if n.is_multiple_of(2) {
+            vec![0, n / 2]
+        } else {
+            vec![0]
+        });
+        let mut column_slots = vec![(0, 0); n];
+        let mut start = 0;
+        let panels = groups
+            .into_iter()
+            .enumerate()
+            .map(|(p, columns)| {
+                for (c, &x) in columns.iter().enumerate() {
+                    column_slots[x] = (p, c);
+                }
+                let mirror_slots = columns
+                    .iter()
+                    .map(|&x| columns.iter().position(|&m| m == mirrored(x, n)).unwrap())
+                    .collect();
+                let runs = column_runs(&columns);
+                let panel = Panel {
+                    start,
+                    columns,
+                    mirror_slots,
+                    runs,
+                };
+                start += panel.columns.len() * n;
+                panel
+            })
+            .collect();
+        Self {
+            panels,
+            column_slots,
+        }
+    }
+
+    fn index(&self, y: usize, x: usize) -> usize {
+        let (p, c) = self.column_slots[x];
+        let panel = &self.panels[p];
+        panel.start + y * panel.columns.len() + c
+    }
 }
 
 /// What `one_frc` needs for images of one size, made once like an FFT plan.
 pub struct FrcPlan {
     n: usize,
     fft: Arc<dyn Fft<f32>>,
-    /// In the panel layout, for each frequency of the half plane fy > 0 or (fy = 0, fx > 0) with
-    /// r = round(|f|) < N/2, its ring r; every other entry is `OUTSIDE_HALF_DISK`.
-    half_plane_rings: Vec<u16>,
+    layout: PanelLayout,
     ring_counts: Vec<u64>,
-    /// In the panel layout, the halves as z = k + i (n - k), then the spectrum Z.
+    /// In the panel layout, the halves as z = k + i (n - k), then the spectrum Z after the row
+    /// FFTs. `fft_columns` alone transforms the columns in place; `one_frc` does not write them.
     spectrum: Vec<Complex32>,
-}
-
-const OUTSIDE_HALF_DISK: u16 = u16::MAX;
-
-/// Copies `src` to `dst` with streaming stores where `dst` allows them: they write whole cache
-/// lines without reading them from memory first, which a normal store does. The caller fences.
-fn copy_streaming(dst: &mut [Complex32], src: &[Complex32]) {
-    assert_eq!(dst.len(), src.len());
-    #[cfg(target_arch = "x86_64")]
-    if (dst.as_ptr() as usize).is_multiple_of(16) && dst.len().is_multiple_of(2) {
-        use std::arch::x86_64::{_mm_loadu_ps, _mm_stream_ps};
-        let (d, s) = (dst.as_mut_ptr() as *mut f32, src.as_ptr() as *const f32);
-        for i in (0..2 * dst.len()).step_by(4) {
-            // SAFETY: i + 4 <= 2 len for both, d + i is 16-byte aligned, and SSE is part of x86-64.
-            unsafe { _mm_stream_ps(d.add(i), _mm_loadu_ps(s.add(i))) };
-        }
-        return;
-    }
-    dst.copy_from_slice(src)
 }
 
 /// The signed frequency of index i of a DFT of length n.
@@ -125,6 +182,103 @@ fn half_plane_rows(n: usize) -> usize {
     (n - 1) / 2 + 1
 }
 
+/// Copies `src` to `dst` with streaming stores where `dst` allows them: they write whole cache
+/// lines without reading them from memory first, which a normal store does. The caller fences.
+fn copy_streaming(dst: &mut [Complex32], src: &[Complex32]) {
+    assert_eq!(dst.len(), src.len());
+    #[cfg(target_arch = "x86_64")]
+    if (dst.as_ptr() as usize).is_multiple_of(16) && dst.len().is_multiple_of(2) {
+        use std::arch::x86_64::{_mm_loadu_ps, _mm_stream_ps};
+        let (d, s) = (dst.as_mut_ptr() as *mut f32, src.as_ptr() as *const f32);
+        for i in (0..2 * dst.len()).step_by(4) {
+            // SAFETY: i + 4 <= 2 len for both, d + i is 16-byte aligned, and SSE is part of x86-64.
+            unsafe { _mm_stream_ps(d.add(i), _mm_loadu_ps(s.add(i))) };
+        }
+        return;
+    }
+    dst.copy_from_slice(src)
+}
+
+/// Ring sums of the half plane, not yet doubled, in slots 0..n/2, and the origin's terms in slot
+/// n / 2.
+type HalfPlaneSums = Vec<[f64; 3]>;
+
+fn add_terms(a: &mut [f64; 3], b: [f64; 3]) {
+    for i in 0..3 {
+        a[i] += b[i];
+    }
+}
+
+/// F1 conj(F2), |F1|^2 and |F2|^2 from Z(f) and Z(-f).
+fn ring_terms(z: Complex32, z_mirror: Complex32) -> [f64; 3] {
+    let zm = z_mirror.conj();
+    let f1 = (z + zm) * 0.5;
+    let f2 = (z - zm) * Complex32::new(0.0, -0.5);
+    [
+        (f1 * f2.conj()).re as f64,
+        f1.norm_sqr() as f64,
+        f2.norm_sqr() as f64,
+    ]
+}
+
+/// Adds the terms of the frequencies of `panel` in the half plane to `sums`, where `at(c, y)` is
+/// the spectrum at row y of the panel's column c.
+fn add_panel_ring_terms(
+    n: usize,
+    panel: &Panel,
+    at: impl Fn(usize, usize) -> Complex32,
+    sums: &mut HalfPlaneSums,
+) {
+    let half = n / 2;
+    for (c, &x) in panel.columns.iter().enumerate() {
+        let fx = frequency(x, n);
+        let m = panel.mirror_slots[c];
+        if x == 0 {
+            add_terms(&mut sums[half], ring_terms(at(c, 0), at(c, 0)));
+        }
+        // Row 0 belongs to the half plane only where fx > 0.
+        let first = if fx > 0 { 0 } else { 1 };
+        // Down the column |f|^2 only grows, and ring r holds r^2 - r + 1 <= |f|^2 <= r^2 + r: the
+        // ring follows with a comparison per row, and a run of rows in one ring is summed apart.
+        let mut r = ring_of(first as i64, fx) as i64;
+        let mut run = [0f64; 3];
+        for y in first..half_plane_rows(n) {
+            let d2 = fx * fx + (y * y) as i64;
+            while d2 > r * r + r {
+                if r < half as i64 {
+                    add_terms(&mut sums[r as usize], run);
+                }
+                run = [0.0; 3];
+                r += 1;
+            }
+            if r >= half as i64 {
+                break;
+            }
+            add_terms(&mut run, ring_terms(at(c, y), at(m, mirrored(y, n))));
+        }
+        if r < half as i64 {
+            add_terms(&mut sums[r as usize], run);
+        }
+    }
+}
+
+/// The spectrum, split into its panels for the tasks of the column pass.
+fn split_into_panels<'a>(
+    mut spectrum: &'a mut [Complex32],
+    layout: &PanelLayout,
+    n: usize,
+) -> Vec<&'a mut [Complex32]> {
+    layout
+        .panels
+        .iter()
+        .map(|panel| {
+            let (this, rest) = std::mem::take(&mut spectrum).split_at_mut(panel.columns.len() * n);
+            spectrum = rest;
+            this
+        })
+        .collect()
+}
+
 /// `FrcPlan::spectrum` shared by the tasks of the split, which each write their own rows of every
 /// panel only.
 #[derive(Clone, Copy)]
@@ -148,31 +302,32 @@ enum RowStep {
     Transform,
 }
 
+/// What the column pass does with each panel after its column FFTs.
+#[derive(Clone, Copy, PartialEq)]
+enum ColumnStep {
+    /// Write the transformed columns back to the spectrum.
+    WriteBack,
+    /// Add the panel's ring terms to the ring sums, and write nothing back.
+    RingSums,
+}
+
 impl FrcPlan {
     /// A plan for images of n x n counts.
     pub fn new(n: usize) -> Self {
-        assert!(
-            n >= 2 && n / 2 < OUTSIDE_HALF_DISK as usize,
-            "unsupported image size {n}"
-        );
-        let mut half_plane_rings = vec![OUTSIDE_HALF_DISK; n * n];
+        assert!(n >= 2, "unsupported image size {n}");
         let mut ring_counts = vec![0; n / 2];
         for y in 0..n {
-            let fy = frequency(y, n);
             for x in 0..n {
-                let fx = frequency(x, n);
-                let r = ring_of(fy, fx);
-                if r < n / 2 && (fy > 0 || (fy == 0 && fx > 0)) {
-                    half_plane_rings[panel_index(n, y, x)] = r as u16;
-                    ring_counts[r] += 2;
+                let r = ring_of(frequency(y, n), frequency(x, n));
+                if r < n / 2 {
+                    ring_counts[r] += 1;
                 }
             }
         }
-        ring_counts[0] += 1;
         Self {
             n,
             fft: FftPlanner::new().plan_fft_forward(n),
-            half_plane_rings,
+            layout: PanelLayout::new(n),
             ring_counts,
             spectrum: vec![Complex32::default(); n * n],
         }
@@ -199,8 +354,7 @@ impl FrcPlan {
         seed: u64,
     ) -> Result<Vec<RingSums>, ToUsizeError> {
         self.split_fft_rows(counts, seed)?;
-        self.fft_columns();
-        Ok(self.ring_sums())
+        Ok(self.fft_columns_ring_sums())
     }
 
     /// Runs `step` on blocks of rows: each task works on its rows in a buffer of its own, in row
@@ -217,7 +371,7 @@ impl FrcPlan {
         }
         let rows = (SPLIT_TASK_COUNTS / n).max(1);
         let splitter = LanesSplitter::<16>::new(seed, CpuFeatures::Detected);
-        let fft = &self.fft;
+        let (fft, layout) = (&self.fft, &self.layout);
         let spectrum = SpectrumRows(self.spectrum.as_mut_ptr());
         (0..n.div_ceil(rows))
             .into_par_iter()
@@ -233,20 +387,22 @@ impl FrcPlan {
                     let height = rows.min(n - y0);
                     let buffer = &mut buffer[..height * n];
                     let p = spectrum.ptr();
-                    let panels = n.div_ceil(PANEL);
                     if step == RowStep::Transform {
-                        for panel in 0..panels {
-                            let (x0, width) = (panel * PANEL, PANEL.min(n - panel * PANEL));
-                            for r in 0..height {
-                                // SAFETY: the run lies within the spectrum, in rows y0..y0 + height,
-                                // which only this task touches.
-                                let run = unsafe {
-                                    std::slice::from_raw_parts(
-                                        p.add(panel_index(n, y0 + r, x0)),
-                                        width,
-                                    )
-                                };
-                                buffer[r * n + x0..r * n + x0 + width].copy_from_slice(run);
+                        for panel in &layout.panels {
+                            let width = panel.columns.len();
+                            // SAFETY: rows y0..y0 + height of a panel are one run within the
+                            // spectrum, which only this task touches.
+                            let run = unsafe {
+                                std::slice::from_raw_parts(
+                                    p.add(panel.start + y0 * width),
+                                    height * width,
+                                )
+                            };
+                            for (r, row) in run.chunks_exact(width).enumerate() {
+                                for &(x, c, len) in &panel.runs {
+                                    buffer[r * n + x..r * n + x + len]
+                                        .copy_from_slice(&row[c..c + len]);
+                                }
                             }
                         }
                     } else {
@@ -258,20 +414,22 @@ impl FrcPlan {
                     if step != RowStep::Split {
                         fft.process_with_scratch(buffer, scratch);
                     }
-                    for panel in 0..panels {
-                        let (x0, width) = (panel * PANEL, PANEL.min(n - panel * PANEL));
-                        // SAFETY: as above; rows y0..y0 + height of one panel are one run.
+                    let mut row_of_panel = [Complex32::default(); 2 * PAIRS_PER_PANEL];
+                    for panel in &layout.panels {
+                        let width = panel.columns.len();
+                        // SAFETY: as above.
                         let run = unsafe {
                             std::slice::from_raw_parts_mut(
-                                p.add(panel_index(n, y0, x0)),
+                                p.add(panel.start + y0 * width),
                                 height * width,
                             )
                         };
-                        for r in 0..height {
-                            copy_streaming(
-                                &mut run[r * width..(r + 1) * width],
-                                &buffer[r * n + x0..r * n + x0 + width],
-                            );
+                        for (r, out) in run.chunks_exact_mut(width).enumerate() {
+                            for &(x, c, len) in &panel.runs {
+                                row_of_panel[c..c + len]
+                                    .copy_from_slice(&buffer[r * n + x..r * n + x + len]);
+                            }
+                            copy_streaming(out, &row_of_panel[..width]);
                         }
                     }
                     #[cfg(target_arch = "x86_64")]
@@ -302,89 +460,114 @@ impl FrcPlan {
             .unwrap();
     }
 
-    /// The FFT of every column, in place, a panel at a time: each task copies its panel's columns
-    /// into a buffer that stays in cache, transforms them, and copies them back.
-    pub fn fft_columns(&mut self) {
+    /// The column FFTs, a panel at a time: each task copies its panel's columns into a buffer that
+    /// stays in cache and transforms them there, then does `step` with them.
+    fn columns_through_buffer(&mut self, step: ColumnStep) -> HalfPlaneSums {
         let n = self.n;
-        let fft = &self.fft;
+        let (fft, layout) = (&self.fft, &self.layout);
         let stride = n + COLUMN_PAD;
-        self.spectrum.par_chunks_mut(PANEL * n).for_each_init(
-            || {
-                (
-                    vec![Complex32::default(); PANEL * stride],
-                    vec![Complex32::default(); fft.get_inplace_scratch_len()],
-                )
-            },
-            |(columns, scratch), panel| {
-                let width = panel.len() / n;
-                for (y, row) in panel.chunks_exact(width).enumerate() {
-                    for (c, &v) in row.iter().enumerate() {
-                        columns[c * stride + y] = v;
-                    }
-                }
-                for c in 0..width {
-                    fft.process_with_scratch(&mut columns[c * stride..c * stride + n], scratch);
-                }
-                for (y, row) in panel.chunks_exact_mut(width).enumerate() {
-                    for (c, v) in row.iter_mut().enumerate() {
-                        *v = columns[c * stride + y];
-                    }
-                }
-            },
-        );
-    }
-
-    /// The ring sums of the spectrum, over the half plane, doubled, plus the origin.
-    pub fn ring_sums(&self) -> Vec<RingSums> {
-        let n = self.n;
-        let spectrum = &self.spectrum;
-        let terms = |y: usize, x: usize| {
-            let z = spectrum[panel_index(n, y, x)];
-            let zm = spectrum[panel_index(n, mirrored(y, n), mirrored(x, n))].conj();
-            let f1 = (z + zm) * 0.5;
-            let f2 = (z - zm) * Complex32::new(0.0, -0.5);
-            [
-                (f1 * f2.conj()).re as f64,
-                f1.norm_sqr() as f64,
-                f2.norm_sqr() as f64,
-            ]
-        };
-        let add = |a: &mut [f64; 3], b: [f64; 3]| {
-            for i in 0..3 {
-                a[i] += b[i];
-            }
-        };
-        let rows = half_plane_rows(n);
-        let sums = self
-            .half_plane_rings
-            .par_chunks(PANEL * n)
-            .enumerate()
+        let panels = split_into_panels(&mut self.spectrum, layout, n);
+        panels
+            .into_par_iter()
+            .zip(&layout.panels)
             .fold(
-                || vec![[0f64; 3]; n / 2],
-                |mut acc, (panel, rings)| {
-                    let width = rings.len() / n;
-                    let x0 = panel * PANEL;
-                    for (y, row) in rings[..rows * width].chunks_exact(width).enumerate() {
-                        for (c, &r) in row.iter().enumerate() {
-                            if r != OUTSIDE_HALF_DISK {
-                                add(&mut acc[r as usize], terms(y, x0 + c));
-                            }
+                || {
+                    let columns = vec![Complex32::default(); 2 * PAIRS_PER_PANEL * stride];
+                    (
+                        columns,
+                        vec![Complex32::default(); fft.get_inplace_scratch_len()],
+                        vec![[0f64; 3]; n / 2 + 1],
+                    )
+                },
+                |(mut columns, mut scratch, mut sums), (data, panel)| {
+                    let width = panel.columns.len();
+                    for (y, row) in data.chunks_exact(width).enumerate() {
+                        for (c, &v) in row.iter().enumerate() {
+                            columns[c * stride + y] = v;
                         }
                     }
-                    acc
+                    for c in 0..width {
+                        fft.process_with_scratch(
+                            &mut columns[c * stride..c * stride + n],
+                            &mut scratch,
+                        );
+                    }
+                    match step {
+                        ColumnStep::WriteBack => {
+                            for (y, row) in data.chunks_exact_mut(width).enumerate() {
+                                for (c, v) in row.iter_mut().enumerate() {
+                                    *v = columns[c * stride + y];
+                                }
+                            }
+                        }
+                        ColumnStep::RingSums => {
+                            add_panel_ring_terms(
+                                n,
+                                panel,
+                                |c, y| columns[c * stride + y],
+                                &mut sums,
+                            );
+                        }
+                    }
+                    (columns, scratch, sums)
+                },
+            )
+            .map(|(_, _, sums)| sums)
+            .reduce(
+                || vec![[0f64; 3]; n / 2 + 1],
+                |mut a, b| {
+                    for (a, b) in a.iter_mut().zip(b) {
+                        add_terms(a, b);
+                    }
+                    a
+                },
+            )
+    }
+
+    /// The column FFTs alone, written back to the spectrum, for checks and benchmarks.
+    pub fn fft_columns(&mut self) {
+        self.columns_through_buffer(ColumnStep::WriteBack);
+    }
+
+    /// The column FFTs and the ring sums in one pass over the spectrum, which it leaves as the
+    /// row FFTs left it.
+    pub fn fft_columns_ring_sums(&mut self) -> Vec<RingSums> {
+        let sums = self.columns_through_buffer(ColumnStep::RingSums);
+        self.full_ring_sums(&sums)
+    }
+
+    /// The ring sums of the spectrum after `fft_columns`, for checks and benchmarks.
+    pub fn ring_sums(&self) -> Vec<RingSums> {
+        let n = self.n;
+        let sums = split_panels_ref(&self.spectrum, &self.layout, n)
+            .into_par_iter()
+            .zip(&self.layout.panels)
+            .fold(
+                || vec![[0f64; 3]; n / 2 + 1],
+                |mut sums, (data, panel)| {
+                    let width = panel.columns.len();
+                    add_panel_ring_terms(n, panel, |c, y| data[y * width + c], &mut sums);
+                    sums
                 },
             )
             .reduce(
-                || vec![[0f64; 3]; n / 2],
+                || vec![[0f64; 3]; n / 2 + 1],
                 |mut a, b| {
                     for (a, b) in a.iter_mut().zip(b) {
-                        add(a, b);
+                        add_terms(a, b);
                     }
                     a
                 },
             );
-        let origin = terms(0, 0);
-        sums.iter()
+        self.full_ring_sums(&sums)
+    }
+
+    /// The sums over whole rings from those over the half plane: doubled, plus the origin.
+    fn full_ring_sums(&self, sums: &HalfPlaneSums) -> Vec<RingSums> {
+        let half = self.n / 2;
+        let origin = sums[half];
+        sums[..half]
+            .iter()
             .zip(&self.ring_counts)
             .enumerate()
             .map(|(r, (s, &count))| {
@@ -404,9 +587,26 @@ impl FrcPlan {
     pub fn spectrum_row_major(&self) -> Vec<Complex32> {
         let n = self.n;
         (0..n * n)
-            .map(|i| self.spectrum[panel_index(n, i / n, i % n)])
+            .map(|i| self.spectrum[self.layout.index(i / n, i % n)])
             .collect()
     }
+}
+
+/// `split_into_panels` for reading.
+fn split_panels_ref<'a>(
+    mut spectrum: &'a [Complex32],
+    layout: &PanelLayout,
+    n: usize,
+) -> Vec<&'a [Complex32]> {
+    layout
+        .panels
+        .iter()
+        .map(|panel| {
+            let (this, rest) = spectrum.split_at(panel.columns.len() * n);
+            spectrum = rest;
+            this
+        })
+        .collect()
 }
 
 /// Spatial frequencies (u, v, amplitude) of the cosine patterns in `pattern_image`.
@@ -523,6 +723,31 @@ mod tests {
                     assert!(
                         (gv - wv).abs() <= 1e-5 * scale,
                         "n = {n}, ring {r}: {gv} against {wv}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fused_ring_sums_match_their_steps() {
+        for n in [2, 3, 17, 48, 64] {
+            let counts = pattern_image(n, 40.0, 9);
+            let mut plan = FrcPlan::new(n);
+            plan.split_fft_rows(&counts, 2).unwrap();
+            let fused = plan.fft_columns_ring_sums();
+            plan.fft_columns();
+            let stepwise = plan.ring_sums();
+            for (r, (f, s)) in fused.iter().zip(&stepwise).enumerate() {
+                assert_eq!(f.count, s.count, "n = {n}, ring {r}");
+                for (a, b) in [
+                    (f.correlation, s.correlation),
+                    (f.power1, s.power1),
+                    (f.power2, s.power2),
+                ] {
+                    assert!(
+                        (a - b).abs() <= 1e-9 * b.abs().max(1.0),
+                        "n = {n}, ring {r}: {a} against {b}"
                     );
                 }
             }

@@ -28,10 +28,17 @@ fn steps(c: &mut Criterion) {
     let mut plan = FrcPlan::new(n);
     plan.one_frc(&image, SEED).unwrap();
     let mut group = c.benchmark_group("one_frc_steps_4096");
-    group.bench_function("split_fft_rows", |b| b.iter(|| plan.split_fft_rows(black_box(&image), SEED).unwrap()));
+    group.bench_function("split_fft_rows", |b| {
+        b.iter(|| plan.split_fft_rows(black_box(&image), SEED).unwrap())
+    });
+    group.bench_function("fft_columns_ring_sums", |b| {
+        b.iter(|| plan.fft_columns_ring_sums())
+    });
     group.bench_function("fft_columns", |b| b.iter(|| plan.fft_columns()));
     group.bench_function("ring_sums", |b| b.iter(|| plan.ring_sums()));
-    group.bench_function("split", |b| b.iter(|| plan.split(black_box(&image), SEED).unwrap()));
+    group.bench_function("split", |b| {
+        b.iter(|| plan.split(black_box(&image), SEED).unwrap())
+    });
     group.bench_function("fft_rows", |b| b.iter(|| plan.fft_rows()));
     group.finish();
 }
