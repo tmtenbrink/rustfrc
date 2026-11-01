@@ -5,3 +5,5 @@
 **/*.pyd
 *.so
 .python-version
+/bench-results
+/gpu/target
