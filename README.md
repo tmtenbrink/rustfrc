@@ -79,8 +79,9 @@ Note that type information is not available for the Rust functions, you will hav
 
 Releases go through [touchgate](https://github.com/borink-org/touchgate):
 
-1. Start the `touchgate` workflow with the version.
-2. Approve the pull request that it opens with `touchgate approve`.
-3. Merge the pull request.
+1. Start the `touchgate` workflow with the version, and merge the pull request that it opens.
+2. On the same day or the next, run `touchgate approve` in a checkout of rustfrc. It signs an approval of the tip of `main` with the security key, and starts `release.yml` with it.
+
+If a release fails, fix the cause on `main` and run both steps again with the same version.
 
 Every pull request adds a line under `## Unreleased` in `CHANGELOG.md`. `release.yml` publishes only from the `publish` branch, with the wheels that `wheels.yml` builds. A change to either file goes on `main`, and the repository owner copies it to `publish`.
