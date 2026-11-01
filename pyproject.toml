@@ -1,9 +1,9 @@
 [project]
 name = "rustfrc"
 version = "1.2.0"
-description = "Fast utility functions useful for Fourier Ring/Shell Correlation: binom_split, pois_gen, square_abs."
+description = "The compiled core of frc: an exact binomial split and Fourier ring correlation, without dependencies."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [
@@ -15,21 +15,21 @@ classifiers = [
     "Programming Language :: Rust",
     "Topic :: Scientific/Engineering :: Image Processing"
 ]
-dependencies = [
-  "numpy >= 1.19.3",
-]
+# None: arrays come in through the buffer protocol and go out as memoryviews.
+dependencies = []
 
 [project.urls]
 Source = "https://github.com/tiptenbrink/rustfrc"
 
 [dependency-groups]
 dev = [
-  "pytest >= 9.0.3; python_version >= '3.10'",
-  "pytest >= 8.4.2; python_version < '3.10'",
+  "numpy >= 1.23.2",
+  "pytest >= 9.0.3",
 ]
 
 [tool.maturin]
 python-source = "python"
+module-name = "rustfrc._internal"
 
 [build-system]
 requires = ["maturin>=1.16,<2.0"]

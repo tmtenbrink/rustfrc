@@ -1,219 +1,191 @@
-use std::convert::TryFrom;
-use std::error::Error;
-use std::fmt::{Display, Formatter};
-use std::marker::{Send, Sync};
-use std::sync::atomic::{AtomicBool, Ordering};
+//! The compiled core of frc: an exact binomial split and Fourier ring correlation, for Python
+//! without NumPy. Functions take any array that supports the buffer protocol and return
+//! `memoryview`s.
 
-use ndarray::{Array, ArrayD, ArrayView, Dimension};
-use rand_distr::{Binomial, Distribution, Poisson, PoissonError};
-use num_complex::{Complex, Complex32, Complex64};
-use num_traits::{Float, Zero};
-use num_traits::real::Real;
-use numpy::{IntoPyArray, PyArrayDyn, PyReadonlyArrayDyn, PyArrayMethods};
+use std::sync::Mutex;
+
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+pub mod binomial;
+mod buffers;
+pub mod frc;
+
+use buffers::{Input, new_memoryview};
+
 #[pymodule]
-fn rustfrc(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let internal = PyModule::new(m.py(), "_internal")?;
-    internal.add_function(wrap_pyfunction!(binom_split_py, &internal)?)?;
-    internal.add_function(wrap_pyfunction!(sqr_abs32_py, &internal)?)?;
-    internal.add_function(wrap_pyfunction!(sqr_abs64_py, &internal)?)?;
-    internal.add_function(wrap_pyfunction!(pois_gen_py, &internal)?)?;
-
-    m.add_submodule(&internal)?;
-
+#[pyo3(name = "_internal")]
+fn internal_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(binom_split, m)?)?;
+    m.add_function(wrap_pyfunction!(one_frc, m)?)?;
+    m.add_function(wrap_pyfunction!(two_frc, m)?)?;
+    m.add_function(wrap_pyfunction!(ring_counts, m)?)?;
+    m.add_class::<FrcPlanPy>()?;
     Ok(())
 }
 
-/// Takes an array (np.ndarray with dtype i32) and splits every pixel value according to the
-/// binomial distribution (n, p) with n = pixel value and p = 0.5. Returns a single array.
+/// The seed of a call: the caller's, or a fresh one from the operating system.
+fn call_seed(seed: Option<u64>) -> u64 {
+    seed.unwrap_or_else(rand::random)
+}
+
+/// Splits every count n of an array of non-negative integers: returns, in an int32 array of the
+/// same shape, a sample k of binomial(n, 0.5) for each. A Poisson-distributed count with mean
+/// lambda becomes one with mean lambda / 2, and so does n - k, independently of k.
+///
+/// The same counts and seed give the same samples on every CPU. Without a seed, every call
+/// draws a fresh one from the operating system.
 #[pyfunction]
-#[pyo3(text_signature = "a, /")]
-fn binom_split_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, i32>) -> PyResult<Bound<'py, PyArrayDyn<i32>>> {
-    let a = a.to_owned_array();
-
-    binom_split(a)
-             .map_err(|e| PyValueError::new_err(format!("{}", e)))
-             .map(|a| a.into_pyarray(py))
-}
-
-/// Takes an array (np.ndarray with dtype complex64) and takes the absolute value and then squares
-/// it, element-wise.
-#[pyfunction]
-fn sqr_abs32_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, Complex32>) -> Bound<'py, PyArrayDyn<f32>> {
-    let a = a.to_owned_array();
-
-    sqr_abs(a).into_pyarray(py)
-}
-
-/// Takes an array (np.ndarray with dtype complex128) and takes the absolute value and then squares
-/// it, element-wise.
-#[pyfunction]
-fn sqr_abs64_py<'py>(py: Python<'py>, a: PyReadonlyArrayDyn<'py, Complex64>) -> Bound<'py, PyArrayDyn<f64>> {
-    let a = a.to_owned_array();
-
-    sqr_abs(a).into_pyarray(py)
-}
-
-/// Generates an array (np.ndarray with dtype float64) by sampling a Poisson distribution with
-/// parameter lambda for each element. Takes a lambda parameter (positive) and a shape tuple of
-/// non-negative ints.
-#[pyfunction]
-fn pois_gen_py(py: Python<'_>, shape: Vec<usize>, lambda: f64) -> PyResult<Bound<'_, PyArrayDyn<f64>>> {
-    pois_gen(&shape, lambda)
-        .map_err(|e| PyValueError::new_err(format!("{}", e)))
-        .map(|a| a.into_pyarray(py))
-}
-
-#[derive(Debug)]
-pub struct ToUsizeError {}
-
-impl Display for ToUsizeError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("Value in array a cannot be cast to u64. All array \
-        values must be non-negative."))
-    }
-}
-
-impl Error for ToUsizeError {}
-
-/// Takes an ndarray (i32, dimension D) and splits every pixel value according to the
-/// binomial distribution (n, p) with n = element value and p = 0.5. Returns a single array.
-pub fn binom_split<D: Dimension>(mut a: Array<i32, D>) -> Result<Array<i32, D>, ToUsizeError> {
-    // AtomicBool is thread-safe, and allows for communicating an error state occurred across threads
-    // We initialize it with the value false, since no error occurred
-    // Note that this comes with a negligible performance penalty
-    let to_unsized_failed = AtomicBool::new(false);
-    
-    // We map all values in parallel, since they do not depend on each other
-    a.par_mapv_inplace(|i| {
-        // If no failure has occurred, we continue
-        // We use Relaxed Ordering because the order in which stores and loads occur does not matter
-        // Once it is set to true, it will stay true, when exactly that happens does not matter
-        if !to_unsized_failed.load(Ordering::Relaxed) {
-            // We use thread rng, which is fast
-            let mut rng = rand::rng();
-            // We try to convert i32 to u64 (which is required for Binomial)
-            // If it fails, we indicate a failure has occurred
-            // Unfortunately it is not possible to escape from the loop immediately
-            let n = u64::try_from(i).unwrap_or_else(|_| {
-                to_unsized_failed.store(true, Ordering::Relaxed);
-                0
-            });
-            // Since the input fit into an i32 and the binomial output is always less, we know the output
-            // will also fit into an i32
-            Binomial::new(n, 0.5).unwrap().sample(&mut rng) as i32
-        }
-        // We just keep the rest unchanged if a failure occurred
-        else {
-            i
-        }
-    });
-    let to_unsized_failed = to_unsized_failed.into_inner();
-    if to_unsized_failed {
-        Err(ToUsizeError {})
-    } else {
-        Ok(a)
-    }
-}
-
-/// Takes an ndarray (dimension D and complex number of generic float F) and computes the absolute
-/// value and then square for each element.
-pub fn sqr_abs<D: Dimension, F: Float + Send + Sync>(a: Array<Complex<F>, D>) -> Array<F, D> {
-    a.mapv(|i| {
-        i.norm_sqr()
+#[pyo3(signature = (a, seed=None))]
+fn binom_split<'py>(
+    py: Python<'py>,
+    a: &Bound<'py, PyAny>,
+    seed: Option<u64>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let input = Input::get(a, "a")?;
+    let shape = input.shape().to_vec();
+    let seed = call_seed(seed);
+    new_memoryview::<i32>(py, &shape, |out| {
+        out.copy_from_slice(&input.counts()?);
+        binomial::binom_split(out, seed, binomial::CpuFeatures::Detected)
+            .map_err(|e| PyValueError::new_err(e.to_string()))
     })
 }
 
-/// Generates an ndarray (dynamic dimension) by sampling a Poisson distribution with parameter
-/// lambda for each element. Takes a lambda parameter (positive f64) and a shape slice.
-pub fn pois_gen(shape: &[usize], lambda: f64) -> Result<ArrayD<f64>, PoissonError> {
-    if lambda.is_sign_negative() || lambda.is_infinite() || lambda.is_nan() || lambda.is_zero() {
-        return Err(PoissonError::ShapeTooSmall);
-    }
-
-    let mut a = ArrayD::<f64>::from_elem(shape, lambda);
-    a.par_mapv_inplace(|l| {
-        let mut rng = rand::rng();
-
-        Poisson::new(l).unwrap().sample(&mut rng)
-    });
-    Ok(a)
+/// The Fourier ring correlation curve of a square image of counts, from one image: every count
+/// is split as binom_split splits it, and the curve is that of the two halves, as two_frc
+/// computes it. A float64 array of length n // 2. Each call makes an FrcPlan, which costs time
+/// and memory; for several images of one size, make one FrcPlan and use its one_frc.
+#[pyfunction]
+#[pyo3(signature = (img, seed=None))]
+fn one_frc<'py>(
+    py: Python<'py>,
+    img: &Bound<'py, PyAny>,
+    seed: Option<u64>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let n = Input::get(img, "img")?.square_size()?;
+    FrcPlanPy::new(n)?.one_frc(py, img, seed)
 }
 
-/// Panics if the input numbers cannot be cast to i32, use with caution!
-pub fn to_i32<D: Dimension, R: Real + Send + Sync>(a: ArrayView<R, D>) -> Array<i32, D> {
-    a.map(|l| {
-        l.to_i32().unwrap()
+/// The Fourier ring correlation curve of two square images of one size: for each ring r < n / 2
+/// of frequencies f with r <= |f| < r + 1, Re(sum F1 conj F2) / sqrt(sum |F1|^2 sum |F2|^2),
+/// where F1 and F2 are the images' spectra. A float64 array of length n // 2. The images are
+/// read as float32.
+#[pyfunction]
+fn two_frc<'py>(
+    py: Python<'py>,
+    img1: &Bound<'py, PyAny>,
+    img2: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let n = Input::get(img1, "img1")?.square_size()?;
+    FrcPlanPy::new(n)?.two_frc(py, img1, img2)
+}
+
+/// The number of frequencies in each ring r < n / 2 of an n x n spectrum: those with
+/// r <= |f| < r + 1. A uint64 array of length n // 2.
+#[pyfunction]
+fn ring_counts(py: Python<'_>, n: usize) -> PyResult<Bound<'_, PyAny>> {
+    check_size(n)?;
+    let counts = frc::ring_counts(n);
+    new_memoryview::<u64>(py, &[counts.len()], |out| {
+        out.copy_from_slice(&counts);
+        Ok(())
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+fn check_size(n: usize) -> PyResult<()> {
+    if n < 2 {
+        return Err(PyValueError::new_err(format!(
+            "images must be at least 2 x 2, not {n} x {n}"
+        )));
+    }
+    Ok(())
+}
 
-    #[test]
-    fn binom_split_2d() {
-        let a: ndarray::Array2<i32> = ndarray::arr2(&[[9, 9, 2, 3],
-            [4, 5, 6, 7]]);
-        let b = binom_split(a.clone());
-        let b = b.unwrap();
+/// What one_frc and two_frc need for n x n images: FFT plans and an n x n spectrum, made once
+/// and reused for every image of that size. One plan computes one curve at a time; threads
+/// that share it take turns.
+#[pyclass(name = "FrcPlan", module = "rustfrc._internal", frozen)]
+struct FrcPlanPy {
+    plan: Mutex<frc::FrcPlan>,
+}
 
-        assert!(b.iter().clone().max() <= a.iter().max());
-        assert!(*(b.iter().min().unwrap()) >= 0);
+impl FrcPlanPy {
+    /// Fails unless `input` is an image of the plan's size.
+    fn check_image(&self, input: &Input) -> PyResult<()> {
+        let n = self.size();
+        if input.square_size()? != n {
+            return Err(PyValueError::new_err(format!(
+                "image of shape {:?}, but the plan is for ({n}, {n})",
+                input.shape()
+            )));
+        }
+        Ok(())
     }
 
-    #[test]
-    fn binom_split_negative() {
-        let a: ndarray::Array2<i32> = ndarray::arr2(&[[9, -9, 2, 3],
-            [4, 5, 6, 7]]);
-        let b = binom_split(a);
+    fn curve_memoryview<'py>(py: Python<'py>, curve: Vec<f64>) -> PyResult<Bound<'py, PyAny>> {
+        new_memoryview::<f64>(py, &[curve.len()], |out| {
+            out.copy_from_slice(&curve);
+            Ok(())
+        })
+    }
+}
 
-        assert!(b.is_err());
+#[pymethods]
+impl FrcPlanPy {
+    #[new]
+    fn new(n: usize) -> PyResult<Self> {
+        check_size(n)?;
+        Ok(Self {
+            plan: Mutex::new(frc::FrcPlan::new(n)),
+        })
     }
 
-    #[test]
-    fn binom_split_1_element() {
-        let a: ndarray::Array1<i32> = ndarray::arr1(&[0]);
-        let b = binom_split(a);
-        assert_eq!(b.unwrap(), ndarray::arr1(&[0]));
+    /// The side n of the images.
+    #[getter]
+    fn size(&self) -> usize {
+        self.plan.lock().unwrap().size()
     }
 
-    #[test]
-    fn binom_split_large_d() {
-        let a1 = ndarray::arr3(&[ [[2, 3], [4, 3]],
-            [[2, 9], [4, 5]], [[9, 7], [2, 3]] ]);
-        let a2 = ndarray::stack(ndarray::Axis(0), &[a1.view(), a1.view()]).unwrap();
-        let a3 = ndarray::stack(ndarray::Axis(0), &[a2.view(), a2.view()]).unwrap();
-        let a4 = ndarray::stack(ndarray::Axis(0), &[a3.view(), a3.view()]).unwrap();
-        let a5 = ndarray::stack(ndarray::Axis(0), &[a4.view(), a4.view()]).unwrap();
-        let a6 = ndarray::stack(ndarray::Axis(0), &[a5.view(), a5.view()]).unwrap();
-
-        let b = binom_split(a6);
-        assert!(b.is_ok());
+    /// The number of frequencies in each ring r < n / 2, as ring_counts(n).
+    fn ring_counts<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        ring_counts(py, self.size())
     }
 
-    #[test]
-    fn sqr_abs_test() {
-        let a: ndarray::Array2<Complex32> = ndarray::arr2(&[[Complex32::new(3., 4.),
-            Complex32::new(3.32, 1.532)],
-            [Complex32::new(-2., 5.), Complex32::new(582., -423.)]]);
-
-        let b = sqr_abs(a);
-        let a: ndarray::Array2<f32> = ndarray::arr2(&[[25., 13.369424], [29., 517653.]]);
-        assert_eq!(a, b);
+    /// The FRC curve of an n x n image of counts, as the function one_frc computes it.
+    #[pyo3(signature = (img, seed=None))]
+    fn one_frc<'py>(
+        &self,
+        py: Python<'py>,
+        img: &Bound<'py, PyAny>,
+        seed: Option<u64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let input = Input::get(img, "img")?;
+        self.check_image(&input)?;
+        let seed = call_seed(seed);
+        let curve = py.detach(|| -> PyResult<Vec<f64>> {
+            let counts = input.counts()?;
+            let mut plan = self.plan.lock().unwrap();
+            plan.one_frc(&counts, seed)
+                .map_err(|e| PyValueError::new_err(e.to_string()))
+        })?;
+        Self::curve_memoryview(py, curve)
     }
 
-    #[test]
-    fn pois_gen_test() {
-        let shape: &[usize] = &[2, 3, 1];
-        let lam = 20.0;
-
-        let a = pois_gen(shape, lam).unwrap();
-
-        let int_a = a.mapv(|f| f as i64);
-
-        assert!(*(int_a.iter().min().unwrap()) >= 0);
+    /// The FRC curve of two n x n images, as the function two_frc computes it.
+    fn two_frc<'py>(
+        &self,
+        py: Python<'py>,
+        img1: &Bound<'py, PyAny>,
+        img2: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let (a, b) = (Input::get(img1, "img1")?, Input::get(img2, "img2")?);
+        self.check_image(&a)?;
+        self.check_image(&b)?;
+        let curve = py.detach(|| -> PyResult<Vec<f64>> {
+            let (a, b) = (a.floats()?, b.floats()?);
+            Ok(self.plan.lock().unwrap().two_frc(&a, &b))
+        })?;
+        Self::curve_memoryview(py, curve)
     }
 }

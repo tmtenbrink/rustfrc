@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+rustfrc 2.0 is the compiled core of frc and has no dependencies. Its functions take any array that supports the buffer protocol and return `memoryview`s instead of NumPy arrays; `numpy.asarray` wraps one without copying it.
+
+### Added
+
+- `one_frc(img, seed=None)` and `FrcPlan(n)`: the whole Fourier ring correlation of a square image of counts, as `frc.one_frc` 0.1 computes it with method 1. Each count is split into binomial halves, both halves are Fourier transformed and their correlation is summed over rings, in two passes over memory. Rings are binned as DIPlib's `RadialSum` bins them, so the ring counts are identical. On 8 threads of an AMD EPYC 9V45, a 4096 x 4096 image takes 18 ms with a reused plan, against 1.0 s for `frc.one_frc` 0.1.
+- `two_frc(img1, img2)` and `FrcPlan.two_frc`: the FRC curve of two images.
+- `ring_counts(n)`: the number of frequencies in each ring of an n x n spectrum.
+- A `seed` for `binom_split` and `one_frc`. With a seed, the same input gives the same output on every CPU.
+- Type stubs.
+
+### Changed
+
+- `binom_split` samples binomial(n, 0.5) exactly, by counting the ones among n random bits from 16 xoshiro256++ generators at once, with AVX-512 or AVX2 when the CPU has them, chosen at run time. Its sampler is about 50 times as fast as in 1.2: ~1 ms for a 2000 x 2000 array on 8 threads of an AMD EPYC 9V45.
+- Every function takes any array that supports the buffer protocol, of booleans, integers or floats in native byte order, and returns a `memoryview`: int32 from `binom_split`, float64 from `one_frc` and `two_frc`, uint64 from `ring_counts`. `binom_split` and `one_frc` refuse floats, with a `TypeError`, instead of truncating them; cast them first. They refuse counts above 2**31 - 1.
+- NumPy is no longer a dependency. rustfrc has none.
+
+### Removed
+
+- `sqr_abs` and `pois_gen`. NumPy computes both: `np.abs(a) ** 2` and `np.random.default_rng().poisson(lam, shape)`.
+- Python 3.9 and 3.10 support. Both have reached their end of life. rustfrc now requires Python 3.11 or later, the first stable ABI with the buffer protocol. Wheels are tagged `cp311-abi3`.
+
+### Security
+
+- Development uses pytest 9.0.3 or later on every Python, which fixes its tmpdir handling (GHSA-6w46-j5rx-g56g).
+
 ## 1.2.0 - 2026-11-01
 
 ### Removed
