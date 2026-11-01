@@ -43,6 +43,23 @@ fn steps(c: &mut Criterion) {
     group.finish();
 }
 
+/// rustfft alone on one thread, on 16 rows that stay in cache, 256 times: the arithmetic of the
+/// 4096 row FFTs of a 4096 x 4096 image without their memory traffic.
+fn fft_arithmetic(c: &mut Criterion) {
+    let n = 4096;
+    let fft = rustfft::FftPlanner::<f32>::new().plan_fft_forward(n);
+    let mut rows = vec![rustfft::num_complex::Complex32::new(1.0, 0.5); 16 * n];
+    let mut scratch =
+        vec![rustfft::num_complex::Complex32::default(); fft.get_inplace_scratch_len()];
+    c.bench_function("rustfft_4096_rows_in_cache_1_thread", |b| {
+        b.iter(|| {
+            for _ in 0..256 {
+                fft.process_with_scratch(black_box(&mut rows), &mut scratch);
+            }
+        })
+    });
+}
+
 /// Short runs, so that the whole benchmark takes minutes.
 fn quick() -> Criterion {
     Criterion::default()
@@ -54,6 +71,6 @@ fn quick() -> Criterion {
 criterion_group! {
     name = benches;
     config = quick();
-    targets = one_frc, steps
+    targets = one_frc, steps, fft_arithmetic
 }
 criterion_main!(benches);
