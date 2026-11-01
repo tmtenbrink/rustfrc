@@ -144,7 +144,7 @@ jobs:
       # rustfrc has no dependencies: it must work without NumPy installed.
       - name: Use the wheel without NumPy
         run: |
-          uv run --isolated --no-project -p 3.15 --with dist/*-cp311-abi3-*.whl python -c '
+          uv run --isolated --no-project -p 3.11 --with dist/*-cp311-abi3-*.whl python -c '
           import array, importlib.util, rustfrc
           assert importlib.util.find_spec("numpy") is None
           k = rustfrc.binom_split(array.array("i", [5] * 64), seed=1)
