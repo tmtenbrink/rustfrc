@@ -40,7 +40,9 @@ jobs:
       # workflow from the run, and the key from TOUCHGATE_KEY.
       - run: touchgate verify
 
-  # The commit is approved from here on, so reading it is safe.
+  # The commit is approved from here on, so reading it is safe. Plain
+  # `check`, because `check --build` needs uv and only reports that uv
+  # downloads maturin.
   check:
     name: Check the version
     needs: verify
@@ -53,7 +55,7 @@ jobs:
         with:
           ref: ${{ inputs.commit }}
           persist-credentials: false
-      - run: touchgate check --build
+      - run: touchgate check
 
   # Builds and tests the wheels and the sdist in jobs that cannot get a PyPI
   # token. ci.yml builds them with the same workflow.
