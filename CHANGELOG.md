@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- `one_frc(img, seed=None)` and `FrcPlan(n)`: the whole Fourier ring correlation of a square image of counts, as `frc.one_frc` computes it with method 1. Each pixel is split into binomial halves, both halves are Fourier transformed and their correlation is summed over rings, in two passes over memory. Rings are binned as DIPlib's `RadialSum` bins them, so the ring counts are identical. On 8 threads of an AMD EPYC 9V45, a 4096 x 4096 image takes 18 ms with a reused plan, against 1.0 s for `frc.one_frc`.
+- The split in `one_frc` samples binomial(n, 0.5) exactly, by counting the set bits of n random bits from 16 xoshiro256++ streams at once. It picks AVX-512 or AVX2 when the CPU has them, at run time. With a seed, the same image gives the same curve on every CPU.
+
 ### Removed
 
 - Python 3.9 support, which ended in October 2025. rustfrc now requires Python 3.10 or later and NumPy 1.21.2 or later, the oldest NumPy with wheels for Python 3.10. Wheels are tagged `cp310-abi3`.

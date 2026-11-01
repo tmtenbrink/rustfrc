@@ -15,6 +15,8 @@ Furthermore, there are also (since version 1.1) `sqr_abs(a: ndarray) -> ndarray`
 
 `sqr_abs` computes the element-wise norm and square of a complex array, while `pois_gen` generates an array of the specified size using the Poisson distribution and a single parameter λ.
 
+`one_frc(img: ndarray, seed: int | None = None) -> ndarray` computes the whole Fourier ring correlation of a square image of counts, as `frc.one_frc` does with method 1: it splits every pixel into binomial halves, Fourier transforms both and correlates them over rings of equal distance from the origin. Ring r holds the frequencies f with r <= |f| < r + 1, as DIPlib's `RadialSum` bins them. The same image and seed give the same curve; without a seed, every call draws a fresh one. For several images of one size, make a `FrcPlan(n)` once and call its `one_frc` method, which reuses the FFT plans and buffers.
+
 ## Requirements
 
 * Python 3.10 or later, or free-threaded Python 3.15t or later
@@ -27,6 +29,8 @@ On an i7-8750H, a decently high performance 6-core chip from 2017, I measured th
 - `binom_split`: ~210 ms on a 4000x4000 array, with each element Poisson-generated with a mean of 200
 - `pois_gen`: ~420 ms to generate a 4000x4000 array with mean 200
 - `sqr_abs`: ~40 ms on a 4000x4000 array, where each element is a complex number with both the real and imaginary parts having a mean of 200
+
+- `one_frc`: ~18 ms on a 4096x4096 image with a reused `FrcPlan` (~30 ms including making the plan), on 8 threads of an AMD EPYC 9V45 (Zen 5), against ~1000 ms for `frc.one_frc` on the same machine
 
 Take this with a grain of salt, but it should provide a decent order of magnitude for larger images. 
 
