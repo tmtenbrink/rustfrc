@@ -172,6 +172,53 @@ fn ring_of(fy: i64, fx: i64) -> usize {
     ((fy * fy + fx * fx) as f64).sqrt().floor() as usize
 }
 
+/// A Vec of `len` zero Complex32s, from memory the system zeroes as it is first touched: `vec!`
+/// does that only for primitive types, and otherwise writes every byte at once. On Linux it also
+/// asks for 2 MiB pages, so that the first touch faults in 64 pages per 128 MiB instead of 32768.
+fn zeroed_complex_vec(len: usize) -> Vec<Complex32> {
+    let floats = std::mem::ManuallyDrop::new(vec![0f32; 2 * len]);
+    assert_eq!(floats.capacity(), 2 * len);
+    #[cfg(target_os = "linux")]
+    {
+        let (start, bytes) = (floats.as_ptr() as usize, 8 * len);
+        let page_start = start.next_multiple_of(4096);
+        if page_start < start + bytes {
+            // SAFETY: the range lies within the allocation, and MADV_HUGEPAGE changes no contents;
+            // where transparent huge pages are off, it does nothing.
+            unsafe {
+                libc::madvise(page_start as *mut libc::c_void, start + bytes - page_start, libc::MADV_HUGEPAGE);
+            }
+        }
+    }
+    // SAFETY: Complex<f32> is repr(C) with two f32 fields, so it has the size of two f32s and
+    // their alignment, and zero bits are 0 + 0i; the allocation is the one of 2 len f32s.
+    unsafe { Vec::from_raw_parts(floats.as_ptr() as *mut Complex32, len, len) }
+}
+
+/// The number of frequencies in each ring r < n / 2 of an n x n spectrum. It goes by |fy| and
+/// |fx|, each with the number of indices that have it, and follows the ring along |fx| by
+/// comparison, as the ring sums do: a quarter of the frequencies, and no square roots.
+fn count_ring_frequencies(n: usize) -> Vec<u64> {
+    let half = n / 2;
+    // |f| = a at one index for a = 0 and, for even n, a = n / 2 (frequency -n / 2), else at two.
+    let indices_with = |a: usize| -> u64 { if a == 0 || 2 * a == n { 1 } else { 2 } };
+    let mut counts = vec![0; half];
+    for ay in 0..half {
+        let mut r = ay as i64;
+        for ax in 0..=half {
+            let d2 = (ay * ay + ax * ax) as i64;
+            while d2 >= (r + 1) * (r + 1) {
+                r += 1;
+            }
+            if r >= half as i64 {
+                break;
+            }
+            counts[r as usize] += indices_with(ay) * indices_with(ax);
+        }
+    }
+    counts
+}
+
 /// The index of frequency -f for the index i of frequency f, in a DFT of length n: (n - i) % n,
 /// without the division that % by a run-time n costs.
 fn mirrored(i: usize, n: usize) -> usize {
@@ -316,21 +363,13 @@ impl FrcPlan {
     /// A plan for images of n x n counts.
     pub fn new(n: usize) -> Self {
         assert!(n >= 2, "unsupported image size {n}");
-        let mut ring_counts = vec![0; n / 2];
-        for y in 0..n {
-            for x in 0..n {
-                let r = ring_of(frequency(y, n), frequency(x, n));
-                if r < n / 2 {
-                    ring_counts[r] += 1;
-                }
-            }
-        }
+        let ring_counts = count_ring_frequencies(n);
         Self {
             n,
             fft: FftPlanner::new().plan_fft_forward(n),
             layout: PanelLayout::new(n),
             ring_counts,
-            spectrum: vec![Complex32::default(); n * n],
+            spectrum: zeroed_complex_vec(n * n),
         }
     }
 
@@ -732,6 +771,22 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn ring_counts_match_a_direct_count() {
+        for n in (2..70).chain([255, 256, 1000]) {
+            let mut direct = vec![0; n / 2];
+            for y in 0..n {
+                for x in 0..n {
+                    let r = ring_of(frequency(y, n), frequency(x, n));
+                    if r < n / 2 {
+                        direct[r] += 1;
+                    }
+                }
+            }
+            assert_eq!(count_ring_frequencies(n), direct, "n = {n}");
         }
     }
 

@@ -39,3 +39,7 @@ harness = false
 [[bench]]
 name = "frc"
 harness = false
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# madvise, for huge pages under the FRC spectrum.
+libc = "0.2.191"

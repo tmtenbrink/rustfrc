@@ -669,6 +669,7 @@ name = "rustfrc"
 version = "1.2.0"
 dependencies = [
  "criterion",
+ "libc",
  "ndarray",
  "num-complex",
  "num-traits",
