@@ -10,7 +10,8 @@ class FrcPlan:
     Fourier ring correlation of square images of one size, as frc.one_frc computes it with
     method 1: every pixel value n is split into k ~ binomial(n, 0.5) and n - k, both halves are
     Fourier transformed, and their correlation is taken over rings of equal distance from the
-    origin. Ring r holds the frequencies f with round(|f|) = r, for r < n / 2.
+    origin. Ring r holds the frequencies f with r <= |f| < r + 1, for r < n / 2, as DIPlib's
+    RadialSum bins them for frc.
 
     Making a plan allocates its buffers and plans its FFTs; reuse it for images of the same size.
     One plan computes one curve at a time; threads that share it take turns.

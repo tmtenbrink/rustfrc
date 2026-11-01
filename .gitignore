@@ -6,3 +6,4 @@
 *.so
 .python-version
 /bench-results
+/.venv-compare

@@ -16,8 +16,8 @@
 //!   the column FFTs are never written back.
 //! - F1 and F2 of a real image satisfy F(-f) = conj F(f), so the ring sums run over half the plane.
 //!
-//! Ring r holds the frequencies f with round(|f|) = r. That DIPlib's `RadialSum`, which frc uses,
-//! bins the same way is not checked here.
+//! Ring r holds the frequencies f with r <= |f| < r + 1, the bins of DIPlib's `RadialSum`, which
+//! frc uses: scripts/compare_frc.py checks that both count the same frequencies in every ring.
 
 use std::sync::Arc;
 
@@ -168,7 +168,8 @@ fn frequency(i: usize, n: usize) -> i64 {
 }
 
 fn ring_of(fy: i64, fx: i64) -> usize {
-    ((fy * fy + fx * fx) as f64).sqrt().round() as usize
+    // f64 takes the square root of these integers exactly, so floor sees perfect squares right.
+    ((fy * fy + fx * fx) as f64).sqrt().floor() as usize
 }
 
 /// The index of frequency -f for the index i of frequency f, in a DFT of length n: (n - i) % n,
@@ -238,13 +239,13 @@ fn add_panel_ring_terms(
         }
         // Row 0 belongs to the half plane only where fx > 0.
         let first = if fx > 0 { 0 } else { 1 };
-        // Down the column |f|^2 only grows, and ring r holds r^2 - r + 1 <= |f|^2 <= r^2 + r: the
-        // ring follows with a comparison per row, and a run of rows in one ring is summed apart.
+        // Down the column |f|^2 only grows, and ring r holds r^2 <= |f|^2 < (r + 1)^2: the ring
+        // follows with a comparison per row, and a run of rows in one ring is summed apart.
         let mut r = ring_of(first as i64, fx) as i64;
         let mut run = [0f64; 3];
         for y in first..half_plane_rows(n) {
             let d2 = fx * fx + (y * y) as i64;
-            while d2 > r * r + r {
+            while d2 >= (r + 1) * (r + 1) {
                 if r < half as i64 {
                     add_terms(&mut sums[r as usize], run);
                 }
@@ -623,7 +624,7 @@ pub const PATTERN_IMAGE_WAVES: [(f64, f64, f64); 4] = [
 ];
 
 /// A synthetic image for checks and benchmarks: Poisson counts around `mean` times one plus the
-/// cosines of `PATTERN_IMAGE_WAVES`, whose rings (6, 19, 52 and 120, for n > 240) have an FRC near
+/// cosines of `PATTERN_IMAGE_WAVES`, whose rings (5, 19, 51 and 120, for n > 240) have an FRC near
 /// 1, while the noise elsewhere has an FRC near 0.
 pub fn pattern_image(n: usize, mean: f64, seed: u64) -> Vec<i32> {
     let mut image = vec![0; n * n];
@@ -778,7 +779,7 @@ mod tests {
         let frc = plan.one_frc(&pattern_image(n, 100.0, 2), 5).unwrap();
         // The weakest wave, at ring 120, stands about 90 times above its ring's noise at this
         // size, and its cross terms with the noise move the FRC by a few percent.
-        for r in [6, 19, 52, 120] {
+        for r in [5, 19, 51, 120] {
             assert!(frc[r] > 0.9, "ring {r}: {}", frc[r]);
         }
         let mut noise: Vec<f64> = frc[130..].iter().map(|v| v.abs()).collect();
