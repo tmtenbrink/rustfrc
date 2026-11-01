@@ -337,6 +337,11 @@ impl FrcPlan {
         self.n
     }
 
+    /// The number of frequencies in each ring r < N / 2.
+    pub fn ring_counts(&self) -> &[u64] {
+        &self.ring_counts
+    }
+
     /// The FRC curve of an image of n x n counts in row-major order, split with `seed`: its value
     /// for each ring r < N / 2. The same counts and seed give the same curve.
     pub fn one_frc(&mut self, counts: &[i32], seed: u64) -> Result<Vec<f64>, ToUsizeError> {

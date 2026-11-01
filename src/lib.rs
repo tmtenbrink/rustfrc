@@ -1,7 +1,9 @@
 use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::borrow::Cow;
 use std::marker::{Send, Sync};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use ndarray::{Array, ArrayD, ArrayView, Dimension};
@@ -9,7 +11,7 @@ use rand_distr::{Binomial, Distribution, Poisson, PoissonError};
 use num_complex::{Complex, Complex32, Complex64};
 use num_traits::{Float, Zero};
 use num_traits::real::Real;
-use numpy::{IntoPyArray, PyArrayDyn, PyReadonlyArrayDyn, PyArrayMethods};
+use numpy::{IntoPyArray, PyArray1, PyArrayDyn, PyReadonlyArray2, PyReadonlyArrayDyn, PyArrayMethods, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -23,6 +25,7 @@ fn rustfrc(m: &Bound<'_, PyModule>) -> PyResult<()> {
     internal.add_function(wrap_pyfunction!(sqr_abs32_py, &internal)?)?;
     internal.add_function(wrap_pyfunction!(sqr_abs64_py, &internal)?)?;
     internal.add_function(wrap_pyfunction!(pois_gen_py, &internal)?)?;
+    internal.add_class::<FrcPlanPy>()?;
 
     m.add_submodule(&internal)?;
 
@@ -67,6 +70,54 @@ fn pois_gen_py(py: Python<'_>, shape: Vec<usize>, lambda: f64) -> PyResult<Bound
     pois_gen(&shape, lambda)
         .map_err(|e| PyValueError::new_err(format!("{}", e)))
         .map(|a| a.into_pyarray(py))
+}
+
+/// Fourier ring correlation of n x n images, as frc.one_frc computes it with method 1. Made once
+/// per image size, like an FFT plan; one plan computes one curve at a time.
+#[pyclass(name = "FrcPlan", module = "rustfrc._internal", frozen)]
+struct FrcPlanPy {
+    plan: Mutex<frc::FrcPlan>,
+}
+
+#[pymethods]
+impl FrcPlanPy {
+    #[new]
+    fn new(n: usize) -> PyResult<Self> {
+        if n < 2 {
+            return Err(PyValueError::new_err(format!("unsupported image size {n}")));
+        }
+        Ok(Self { plan: Mutex::new(frc::FrcPlan::new(n)) })
+    }
+
+    #[getter]
+    fn size(&self) -> usize {
+        self.plan.lock().unwrap().size()
+    }
+
+    /// The number of frequencies in each ring r < n / 2.
+    fn ring_counts(&self) -> Vec<u64> {
+        self.plan.lock().unwrap().ring_counts().to_vec()
+    }
+
+    /// The FRC curve of an n x n image of counts (int32), for each ring r < n / 2. The split
+    /// uses `seed`, or a fresh seed from the operating system when it is None.
+    #[pyo3(signature = (a, seed=None))]
+    fn one_frc<'py>(&self, py: Python<'py>, a: PyReadonlyArray2<'py, i32>, seed: Option<u64>) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let n = self.size();
+        if a.shape() != [n, n] {
+            return Err(PyValueError::new_err(format!("image of shape {:?}, the plan is for ({n}, {n})", a.shape())));
+        }
+        let view = a.as_array();
+        let counts: Cow<[i32]> = match view.as_slice() {
+            Some(slice) => Cow::Borrowed(slice),
+            None => Cow::Owned(view.iter().copied().collect()),
+        };
+        let seed = seed.unwrap_or_else(rand::random);
+        let curve = py
+            .detach(|| self.plan.lock().unwrap().one_frc(&counts, seed))
+            .map_err(|e| PyValueError::new_err(format!("{}", e)))?;
+        Ok(curve.into_pyarray(py))
+    }
 }
 
 #[derive(Debug)]
