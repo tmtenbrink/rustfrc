@@ -97,6 +97,12 @@ fn ring_of(fy: i64, fx: i64) -> usize {
     ((fy * fy + fx * fx) as f64).sqrt().round() as usize
 }
 
+/// The index of frequency -f for the index i of frequency f, in a DFT of length n: (n - i) % n,
+/// without the division that % by a run-time n costs.
+fn mirrored(i: usize, n: usize) -> usize {
+    if i == 0 { 0 } else { n - i }
+}
+
 /// The rows that hold the half plane fy > 0 or fy = 0: 0 ..= (n - 1) / 2.
 fn half_plane_rows(n: usize) -> usize {
     (n - 1) / 2 + 1
@@ -309,7 +315,7 @@ impl FrcPlan {
         let spectrum = &self.spectrum;
         let terms = |y: usize, x: usize| {
             let z = spectrum[panel_index(n, y, x)];
-            let zm = spectrum[panel_index(n, (n - y) % n, (n - x) % n)].conj();
+            let zm = spectrum[panel_index(n, mirrored(y, n), mirrored(x, n))].conj();
             let f1 = (z + zm) * 0.5;
             let f2 = (z - zm) * Complex32::new(0.0, -0.5);
             [
